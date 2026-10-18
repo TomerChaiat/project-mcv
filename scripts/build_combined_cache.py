@@ -18,6 +18,7 @@ Read back with tune_fusion.py / evaluate.py --cache-dir cache_combined
     python scripts/build_combined_cache.py
 """
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -62,32 +63,16 @@ def merge_condition(model_name, corruption, severity, spectral_dir, spatial_dir,
         return None
     spat = cache.load_spatial_condition(model_name, corruption, severity)
 
-    spec_paths, spat_paths = list(spec["paths"]), list(spat["paths"])
-    if spec_paths != spat_paths:
-        # re-order the spatial condition to match the spectral one's image order
-        pos = {p: i for i, p in enumerate(spat_paths)}
-        if set(spec_paths) != set(spat_paths):
-            raise ValueError(
-                f"{model_name}/{corruption}/{severity}: image sets differ between "
-                f"{spectral_dir} and {spatial_dir}"
-            )
-        idx = [pos[p] for p in spec_paths]
-        spat_probs = spat["probs"][idx]
-    else:
-        spat_probs = spat["probs"]
-
-    combined = np.concatenate(
-        [spec["probs"][:, :LADDER_LEN], spat_probs[:, list(spatial_views)]], axis=1
-    ).astype(np.float16)
-    assert combined.shape[1] == LADDER_LEN + len(list(spatial_views))
-    return combined, spec["labels"], spec["paths"]
+    rec = cache.merge_profiles(spec, spat, spatial_views=spatial_views, ladder_len=LADDER_LEN)
+    return (rec["probs"], rec["labels"], rec["paths"], rec["cutoffs"], rec["ladder"],
+            list(rec["view_names"]))
 
 
 def main():
     """Merge every requested (model, corruption, severity) condition and save it."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"],
-                    choices=["resnet18", "deit"])
+                    choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--corruptions", nargs="+",
                     default=STANDARD_CORRUPTIONS + ["clean"])
     ap.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
@@ -99,11 +84,23 @@ def main():
                          "the spectral ladder; default all 7. e.g. '--spatial-views 1' "
                          "for hflip-only (pair with --out-dir cache_combined_lite)")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--virtual", action="store_true",
+                    help="write only a virtual_combined.json pointing at the two "
+                         "source caches; conditions are concatenated on load "
+                         "(no disk copy). See src/cache.py VIRTUAL_SPEC.")
     args = ap.parse_args()
 
     spectral_dir = Path(args.spectral_dir)
     spatial_dir = Path(args.spatial_dir)
     out_dir = Path(args.out_dir)
+
+    if args.virtual:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        spec = {"spectral": str(spectral_dir), "spatial": str(spatial_dir),
+                "spatial_views": list(args.spatial_views), "ladder_len": LADDER_LEN}
+        (out_dir / cache.VIRTUAL_SPEC).write_text(json.dumps(spec, indent=2))
+        print(f"wrote virtual combined cache {out_dir / cache.VIRTUAL_SPEC}: {spec}")
+        return
 
     conditions = []
     for corr in args.corruptions:
@@ -125,11 +122,14 @@ def main():
             if merged is None:
                 print(f"  --  {corr}/{sev}: missing in one of the source caches")
                 continue
-            probs, labels, paths = merged
+            probs, labels, paths, cutoffs, ladder, view_names = merged
 
             cache.CACHE_ROOT = out_dir
-            out = cache.save_spatial_condition(  # generic probs+labels+paths schema
-                model_name, corr, sev, probs=probs, labels=labels, paths=paths,
+            out = cache.save_spatial_condition(
+                model_name, corr, sev,
+                probs=probs, labels=labels, paths=paths,
+                cutoffs=cutoffs, ladder=ladder, ladder_len=LADDER_LEN,
+                view_names=view_names,
             )
             orig_acc = (probs.astype(np.float32)[:, 0].argmax(-1) == labels).mean()
             print(f"  ok  {corr}/{sev}: {len(paths):5d} imgs  "

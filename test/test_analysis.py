@@ -60,6 +60,47 @@ def test_fusion_weights_sum_to_one():
     assert np.allclose(w.sum(axis=-1), 1.0)
 
 
+def test_non_ladder_views_are_neutral_in_stability():
+    """Views after the ladder (spatial crops/flips) get the image's mean ladder
+    S, so after the per-image z-score they sit at exactly 0. All three
+    implementations agree."""
+    import torch
+    from src.evaluation import _stability_from_d_torch, _zscore_torch
+
+    rng = np.random.default_rng(2)
+    logits = rng.standard_normal((4, 15, 20)) * 2
+    probs = (np.exp(logits) / np.exp(logits).sum(-1, keepdims=True)).astype(np.float32)
+    d = analysis.pairwise_jsd(probs)
+    S = analysis.stability_from_d(d, m=1, ladder_len=8)
+    assert np.allclose(S[:, 8:], S[:, :8].mean(axis=1, keepdims=True))
+    assert np.allclose(analysis.zscore(S)[:, 8:], 0.0, atol=1e-5)
+    d_t = torch.from_numpy(np.asarray(d, dtype=np.float32))
+    assert np.allclose(analysis._stability_from_d_t(d_t, m=1, ladder_len=8).numpy(), S, atol=1e-6)
+    S_t = _stability_from_d_torch(d_t, m=1, ladder_len=8)
+    assert np.allclose(S_t.numpy(), S, atol=1e-6)
+    assert np.allclose(_zscore_torch(S_t)[:, 8:].numpy(), 0.0, atol=1e-5)
+
+
+def test_single_view_ladder_has_zero_stability():
+    """A spatial-only profile (ladder_len=1: only the original is 'on the
+    ladder') has no ladder neighbours; stability is 0 everywhere, not NaN, in
+    all three implementations."""
+    import torch
+    from src.evaluation import _stability_from_d_torch
+
+    rng = np.random.default_rng(3)
+    logits = rng.standard_normal((4, 8, 20))
+    probs = (np.exp(logits) / np.exp(logits).sum(-1, keepdims=True)).astype(np.float32)
+    d = analysis.pairwise_jsd(probs)
+    S = analysis.stability_from_d(d, m=1, ladder_len=1)
+    assert np.all(np.isfinite(S)) and np.allclose(S, 0.0)
+    d_t = torch.from_numpy(np.asarray(d, dtype=np.float32))
+    assert np.allclose(analysis._stability_from_d_t(d_t, m=1, ladder_len=1).numpy(), 0.0)
+    assert np.allclose(_stability_from_d_torch(d_t, m=1, ladder_len=1).numpy(), 0.0)
+    _, _, S2 = analysis.profile_signals(probs, m=1, standardize=True, ladder_len=1, device="cpu")
+    assert np.all(np.isfinite(S2)) and np.allclose(S2, 0.0)
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

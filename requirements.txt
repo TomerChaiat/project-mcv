@@ -13,12 +13,14 @@ scikit-image
 
 # Metrics / analysis
 scikit-learn
+pandas
 
 # Plotting
 matplotlib
 
 # Utilities
 tqdm
+pytest
 
 # Data fetch
 pyarrow

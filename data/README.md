@@ -50,6 +50,15 @@ Saved as:
 data/imagenet/val/<class>/<image>.JPEG
 ```
 
+That re-host renamed every file (`<class>_val_<i>.JPEG`), while ImageNet-C
+keeps the original `ILSVRC2012_val_<id>.JPEG` names. They are the same 50
+images per class, so `data/clean_name_map.json` (committed) maps each clean
+image to its ImageNet-C name; it was built by matching image content
+(`python scripts/match_clean_names.py`, one-to-one per class, cross-checked
+against a second corruption). The tune/test split uses it so a clean image
+always falls in the same half as its corrupted versions. Re-run the script
+only if you re-download the clean images.
+
 ## Step 3 - corrupted images
 
 ```bash
@@ -72,6 +81,14 @@ The 15 corruptions, by group:
 | weather | snow, frost, fog, brightness |
 | digital | contrast, elastic_transform, pixelate, jpeg_compression |
 
+Optional: ImageNet-C's 4 held-out **extra** corruptions (speckle_noise,
+gaussian_blur, spatter, saturate), used only for the held-out check
+(`scripts/evaluate_extra.py`; never seen by tuning):
+
+```bash
+python scripts/fetch_imagenet_c.py --tarballs extra
+```
+
 This step takes a while, because the source server is slow. It is safe to
 interrupt and re-run: anything already downloaded is skipped. To speed it up,
 download the four groups at the same time:
@@ -86,7 +103,7 @@ Useful options:
 
 | option | effect |
 |--------|--------|
-| `--tarballs noise blur` | only these groups |
+| `--tarballs noise blur` | only these groups (`extra` = the 4 held-out corruptions) |
 | `--corruptions fog frost` | only these corruptions |
 | `--severities 1 3 5` | only these severity levels |
 
@@ -109,8 +126,9 @@ for corruption in sorted(p.name for p in root.iterdir() if p.is_dir()):
         if classes != subset or n_images != 5000:
             problems.append(f"{corruption}/{severity}: {len(classes)} classes, {n_images} images")
 
+n_corr = sum(1 for p in root.iterdir() if p.is_dir())
 print("\n".join(problems) if problems
-      else "imagenet-c OK: 15 corruptions x 5 severities, 100 classes, 5000 images each")
+      else f"imagenet-c OK: {n_corr} corruptions x 5 severities, 100 classes, 5000 images each")
 
 val = Path("data/imagenet/val")
 print("clean val:", sum(1 for _ in val.rglob("*.JPEG")), "images,",
@@ -123,6 +141,11 @@ Expected:
 ```
 imagenet-c OK: 15 corruptions x 5 severities, 100 classes, 5000 images each
 clean val: 5000 images, 100 classes
+```
+
+(19 corruptions with the optional extras.)
+
+```
 ```
 
 For an end-to-end check, run the first experiment step on a small slice:
@@ -143,11 +166,12 @@ contrast 37%, matching the numbers in the ImageNet-C paper. (Delete the tiny
 ```
 data/
   subset_classes.json                            the 100 chosen classes
+  clean_name_map.json                            clean image -> ImageNet-C name
   imagenet/val/<class>/                           5000 clean images
-  imagenet-c/<corruption>/<severity>/<class>/     375,000 corrupted images
+  imagenet-c/<corruption>/<severity>/<class>/     375,000 corrupted images (+100,000 with the 4 extras)
 ```
 
-Only this file and `subset_classes.json` are kept in git. The images are meant
+Only this file, `subset_classes.json` and `clean_name_map.json` are kept in git. The images are meant
 to be rebuilt with the steps above.
 
 ## Source

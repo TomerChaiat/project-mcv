@@ -1,22 +1,18 @@
 __pycache__/
+.pytest_cache/
 *.pyc
-cache/
-cmds.txt
 # ignore the dataset itself, but keep the small files that define/document it
 # (a plain 'data/' can't be overridden by a later '!' rule, so exclude contents)
 data/*
 !data/README.md
 !data/subset_classes.json
-.ipynb_checkpoints/
+!data/clean_name_map.json
 .venv/
 results/
 report/
-*.tar
 .vscode/
 .conda/
 .idea/
 figures/
-cache_fixed/
-cache_combined/
-cache_combined_lite/
-cache_spatial/
+cache/
+cache_*/

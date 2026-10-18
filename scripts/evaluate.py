@@ -32,30 +32,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from src import cache
-from src.metrics import FusionConfig, precompute, score
+from src.metrics import FusionConfig
+from src.evaluation import device_from_arg, fit_vanilla_temperature, score_many_torch
 from src.splits import CORRUPTION_FAMILY, FAMILIES, tune_test_masks
 
 #: columns of the per-condition CSV
 ROW_FIELDS = ["model", "corruption", "family", "severity", "n",
               "orig_acc", "equal_acc", "conf_acc", "agree_acc", "view1_acc",
               "fused_acc", "oracle_acc",
-              "orig_ece", "fused_ece", "negative_transfer", "positive_transfer"]
+              "orig_ece", "fused_ece", "orig_nll", "fused_nll",
+              "orig_ece_calibrated", "orig_nll_calibrated",
+              "negative_transfer", "positive_transfer"]
 
 
-def latest_tuning(model_name, tag=None):
-    """Path of the newest matching tuning json, or exit if there is none.
+def latest_tuning(model_name, tag=None, results_dir="results"):
+    """Return the newest tuning JSON for this model/cache tag.
 
-    Matches tune_fusion.py's naming: `tuning_<model>[_<tag>]_<timestamp>.json`.
-    Filtering by `tag` (the cache dir a tuning run was built against, e.g.
-    "cache_fixed") stops --tuning auto from picking a config tuned on a
-    different view family than the one this run's --cache-dir reads.
+    Tuning files are named ``tuning_grid_*``, ``tuning_ce*`` or (selected)
+    ``tuning_<model>_<tag>_final_*``.
     """
-    pattern = (f"results/tuning_{model_name}_{tag}_*.json" if tag
-              else f"results/tuning_{model_name}_2*.json")  # no tag -> timestamp only
-    files = sorted(glob.glob(pattern))
+    root = Path(results_dir)
+    if tag:
+        patterns = [root / f"tuning_*_{model_name}_{tag}_*.json"]
+    else:
+        patterns = [root / f"tuning_*_{model_name}_*.json"]
+    files = []
+    for pattern in patterns:
+        files.extend(glob.glob(str(pattern)))
     if not files:
-        raise SystemExit(f"--tuning auto: no {pattern} found")
-    return files[-1]
+        raise SystemExit(f"--tuning auto: no tuning JSON found for {model_name} tag={tag!r} in {root}")
+    return max(files, key=lambda x: Path(x).stat().st_mtime)
 
 
 def config_picker(args, model_name, tag=None):
@@ -91,7 +97,7 @@ def main():
     """Score every cached condition for each model and write the results table."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"],
-                    choices=["resnet18", "deit"])
+                    choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--tuning", default=None,
                     help='path to a tuning json, or "auto" for the newest per model')
     ap.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
@@ -115,6 +121,15 @@ def main():
     ap.add_argument("--tag", default=None,
                     help="suffix for the output filename, e.g. the ladder name; "
                          "defaults to the cache dir name when it isn't 'cache'")
+    ap.add_argument("--device", default="auto",
+                    help="torch device for signal/fusion evaluation (default: auto)")
+    ap.add_argument("--signal-chunk", type=int, default=256)
+    ap.add_argument("--signal-pair-batch", type=int, default=32)
+    ap.add_argument("--quiet-progress", action="store_true")
+    ap.add_argument("--no-vanilla-calibration", action="store_true",
+                    help="skip fitting the calibrated-vanilla baseline "
+                         "(orig_ece_calibrated/orig_nll_calibrated stay equal "
+                         "to the uncalibrated orig_ece/orig_nll)")
     args = ap.parse_args()
 
     cache.CACHE_ROOT = Path(args.cache_dir)
@@ -124,9 +139,20 @@ def main():
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    device = device_from_arg(args.device)
     for model_name in args.models:
         pick, src = config_picker(args, model_name, tag)
         print(f"\n=== {model_name}  (config: {src}) ===")
+        print(f"  evaluation device: {device}")
+
+        orig_temp = 1.0
+        if not args.no_vanilla_calibration:
+            orig_temp, cal_nll = fit_vanilla_temperature(
+                args.cache_dir, model_name, list(CORRUPTION_FAMILY), args.severities,
+                frac_tune=args.frac_tune, split_seed=args.split_seed, device=device,
+            )
+            print(f"  calibrated-vanilla baseline: T={orig_temp:.3g} "
+                  f"(tune-half NLL {cal_nll:.4f}, fit on view 0 only)")
 
         rows = []
         for corruption in CORRUPTION_FAMILY:
@@ -139,21 +165,37 @@ def main():
                 else:
                     mask = np.ones(len(d["labels"]), dtype=bool)
                 cfg = pick(corruption)
-                r = score(precompute(d["probs"][mask], m=cfg.m, agreement=cfg.agreement,
-                                    ladder_len=args.ladder_len),
-                          d["labels"][mask], cfg, full=True)
+                r = score_many_torch(
+                    d["probs"][mask], d["labels"][mask], {"method": cfg},
+                    ladder_len=args.ladder_len, device=device,
+                    signal_chunk=args.signal_chunk,
+                    signal_pair_batch=args.signal_pair_batch,
+                    orig_temperature=orig_temp,
+                )["method"]
                 r.update(model=model_name, corruption=corruption,
                          family=CORRUPTION_FAMILY[corruption], severity=sev)
                 rows.append(r)
+                if not args.quiet_progress:
+                    print(f"  {corruption:18s}/{sev}: fused {100*r['fused_acc']:.2f}%")
 
-        # clean (always all images)
+        # clean: same held-out half as the corrupted conditions. The clean
+        # images are the very images ImageNet-C corrupted, so tune-half clean
+        # images are pictures whose corrupted versions the config was fit on.
         clean_row = None
         if cache.has_condition(model_name, "clean", 0):
             d = cache.load_condition(model_name, "clean", 0)
+            if args.eval_half == "test":
+                _, mask = tune_test_masks(d["paths"], args.frac_tune, args.split_seed)
+            else:
+                mask = np.ones(len(d["labels"]), dtype=bool)
             cfg = pick("clean")
-            clean_row = score(precompute(d["probs"], m=cfg.m, agreement=cfg.agreement,
-                                        ladder_len=args.ladder_len),
-                              d["labels"], cfg, full=True)
+            clean_row = score_many_torch(
+                d["probs"][mask], d["labels"][mask], {"method": cfg},
+                ladder_len=args.ladder_len, device=device,
+                signal_chunk=args.signal_chunk,
+                signal_pair_batch=args.signal_pair_batch,
+                orig_temperature=orig_temp,
+            )["method"]
 
         _report(model_name, rows, clean_row, out_dir, stamp, tag)
 
@@ -183,7 +225,8 @@ def _report(model_name, rows, clean_row, out_dir, stamp, tag=None):
                 per_corr[c] = {k: _mean(cr, k) for k in
                                ("orig_acc", "equal_acc", "conf_acc", "agree_acc",
                                 "view1_acc", "fused_acc", "oracle_acc",
-                                "negative_transfer", "fused_ece")}
+                                "negative_transfer", "fused_ece", "orig_nll",
+                                "fused_nll", "orig_ece_calibrated", "orig_nll_calibrated")}
 
     summary = {
         "model": model_name,
@@ -200,6 +243,11 @@ def _report(model_name, rows, clean_row, out_dir, stamp, tag=None):
         "mean_negative_transfer": _mean(rows, "negative_transfer"),
         "mean_fused_ece": _mean(rows, "fused_ece"),
         "mean_orig_ece": _mean(rows, "orig_ece"),
+        "mean_fused_nll": _mean(rows, "fused_nll"),
+        "mean_orig_nll": _mean(rows, "orig_nll"),
+        "orig_temperature": rows[0]["orig_temperature"] if rows else None,
+        "mean_orig_ece_calibrated": _mean(rows, "orig_ece_calibrated"),
+        "mean_orig_nll_calibrated": _mean(rows, "orig_nll_calibrated"),
         "worst_corruption": min(per_corr, key=lambda c: per_corr[c]["fused_acc"]) if per_corr else None,
         "per_corruption": per_corr,
     }
@@ -231,8 +279,12 @@ def _report(model_name, rows, clean_row, out_dir, stamp, tag=None):
           f"{summary['mCA_oracle']*100:>6.1f} {summary['mean_negative_transfer']*100:>6.1f}")
     print(f"  fused - orig : {(summary['mCA_fused']-summary['mCA_orig'])*100:+.1f} pts")
     print(f"  worst corruption (fused): {summary['worst_corruption']}")
-    print(f"  ECE  orig {summary['mean_orig_ece']:.3f} -> fused {summary['mean_fused_ece']:.3f}")
+    print(f"  ECE  orig {summary['mean_orig_ece']:.3f} -> fused {summary['mean_fused_ece']:.3f}  "
+          f"(orig calibrated T={summary['orig_temperature']}: {summary['mean_orig_ece_calibrated']:.3f})")
+    print(f"  NLL  orig {summary['mean_orig_nll']:.3f} -> fused {summary['mean_fused_nll']:.3f}  "
+          f"(orig calibrated: {summary['mean_orig_nll_calibrated']:.3f})")
     print(f"  saved {csv_path}  and  {json_path}")
+    return csv_path, json_path
 
 
 if __name__ == "__main__":
