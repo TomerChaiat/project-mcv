@@ -6,6 +6,7 @@
   the same picture is always in the same half in every corruption/severity.
 """
 import hashlib
+import json
 from pathlib import Path
 import numpy as np
 
@@ -22,6 +23,12 @@ FAMILIES = {
 CORRUPTION_FAMILY = {c: fam for fam, cs in FAMILIES.items() for c in cs}
 #: all 15 corruption names, family order
 ALL_CORRUPTIONS = [c for cs in FAMILIES.values() for c in cs]
+#: ImageNet-C's 4 held-out "extra" corruptions and the family whose
+#: leave-one-family-out config scores them. Deliberately NOT in
+#: CORRUPTION_FAMILY, so no tuning or selection step ever iterates over them
+#: (scripts/evaluate_extra.py is the only consumer).
+EXTRA_FAMILY = {"speckle_noise": "noise", "gaussian_blur": "blur",
+                "spatter": "weather", "saturate": "digital"}
 
 
 def leave_one_family_out():
@@ -37,13 +44,29 @@ def leave_one_family_out():
         yield held, tune, list(FAMILIES[held])
 
 
+#: clean-image stem -> ImageNet-C stem (scripts/match_clean_names.py)
+CLEAN_NAME_MAP = Path(__file__).resolve().parent.parent / "data" / "clean_name_map.json"
+_clean_map = None
+
+
+def _clean_names():
+    global _clean_map
+    if _clean_map is None:
+        _clean_map = json.loads(CLEAN_NAME_MAP.read_text()) if CLEAN_NAME_MAP.exists() else {}
+    return _clean_map
+
+
 def image_key(path):
-    """Stable id for an image, shared across every corruption/severity.
+    """Stable id for an image, shared across every corruption/severity AND clean.
 
     ImageNet-C keeps the original file name (ILSVRC2012_val_XXXXXXXX.JPEG), so
-    the stem is the same picture everywhere.
+    the stem is the same picture everywhere. The clean images were renamed by
+    their re-host (<wnid>_val_<i>.JPEG); data/clean_name_map.json maps them
+    back to their ImageNet-C name (matched by content), so a clean image lands
+    in the same tune/test half as its corrupted versions.
     """
-    return Path(str(path)).stem
+    stem = Path(str(path)).stem
+    return _clean_names().get(stem, stem)
 
 
 def in_tune_half(path, frac_tune=0.5, seed=0):

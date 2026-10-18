@@ -23,6 +23,7 @@ from PIL import Image
 from torchvision.transforms import functional as TF
 
 from src import analysis
+from src.cache import load_image
 from src.filters import make_spectral_views, cutoffs_for_energy_ladder
 from src.models import load_resnet18, load_deit_tiny
 from src.imagenet_labels import class_name, true_index_from_path
@@ -57,9 +58,7 @@ def main():
     model = (load_resnet18 if args.model == "resnet18" else load_deit_tiny)(device)[0]
 
     # image -> [0,1] tensor, standard ImageNet eval geometry
-    pil = Image.open(args.image).convert("RGB")
-    pil = TF.center_crop(TF.resize(pil, 256), [224, 224])
-    image = TF.to_tensor(pil)
+    image = load_image(args.image)
 
     # energy-spaced low-pass ladder, then the view stack
     cutoffs = cutoffs_for_energy_ladder(image, args.energies)

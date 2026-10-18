@@ -1,7 +1,6 @@
 """CUDA-accelerated grid search for fusion hyperparameters.
 
-This script searches the *same* grid and writes the same tuning JSON schema,
-but removes the two dominant sources of wasted work in the legacy tuner:
+Two things keep it fast compared with scoring each config independently:
 
 1. Pairwise JSD is computed once per cached condition.  From that one matrix we
    derive both agreement variants and every requested stability radius.
@@ -25,8 +24,8 @@ definition.
 Examples
 --------
     python scripts/tune_fusion.py --models resnet18 \
-        --cache-dir cache_fixed_fresh --tag cache_fixed_fresh \
-        --out results_fast --tune-severities 1 3 5
+        --cache-dir cache_fixed --tag cache_fixed_lofo \
+        --out results
 
     # Larger config batches use more VRAM but can be faster on a 12 GB GPU.
     python scripts/tune_fusion.py --config-batch 96 ...
@@ -66,7 +65,7 @@ AGREEMENT_MODES = ("all", "origin")
 
 
 def grid(m: int, agreement: str = "all"):
-    """Yield configs in the exact same order as the legacy tuner."""
+    """Yield the grid configs in a fixed order (ties go to the earlier one)."""
     for a, b, g, tau, std in itertools.product(
         ALPHAS, BETAS, GAMMAS, TAUS, STANDARDIZE
     ):
@@ -135,8 +134,8 @@ def signal_variants_one_pass(
 ):
     """Compute every requested C/A/S variant with one pairwise-JSD pass.
 
-    Returns raw and per-image-standardized arrays.  Unlike the legacy tuner,
-    probabilities themselves are *not* duplicated six times.
+    Returns raw and per-image-standardized arrays; the probabilities
+    themselves are not duplicated per variant.
     """
     probs = np.asarray(probs, dtype=np.float32)
     n, v, _ = probs.shape
@@ -268,8 +267,8 @@ def score_condition(
                 pair_batch=signal_pair_batch,
             )
         else:
-            # Debug/parity fallback.  This intentionally mirrors the previous
-            # GPU tuner and therefore creates a host float32 view.
+            # NumPy path (debugging / parity checks); creates a host float32
+            # copy of the probabilities.
             probs32 = np.asarray(probs, dtype=np.float32)
             raw, std = signal_variants_one_pass(
                 probs32,
@@ -344,7 +343,7 @@ def main():
     from src import cache
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--models", nargs="+", default=["resnet18", "deit"], choices=["resnet18", "deit"])
+    ap.add_argument("--models", nargs="+", default=["resnet18", "deit"], choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--tune-severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
     ap.add_argument("--frac-tune", type=float, default=0.5)
     ap.add_argument("--split-seed", type=int, default=0)
@@ -482,8 +481,8 @@ def main():
             if means is None:
                 print(f"  {name:14s}: no cached tune conditions, skipping")
                 return None
-            # np.argmax returns the first maximum, matching the old nested loops'
-            # strict '>' tie-breaking because candidate order is identical.
+            # np.argmax returns the first maximum: ties go to the earlier
+            # candidate in grid order.
             idx = int(np.argmax(means))
             cfg = candidates[idx]
             acc = float(means[idx])
