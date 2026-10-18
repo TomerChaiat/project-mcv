@@ -1,0 +1,65 @@
+{
+  "definition": "GPU compute from an already-loaded 256x256 tensor; disk/JPEG I/O excluded for both approaches",
+  "vanilla": "center crop + ImageNet normalization + one model forward + softmax",
+  "final_combined": "8 fixed spectral views + 7 additional spatial views + 15 forwards + confidence/agreement/stability + final fusion/calibration",
+  "batch_size": 32,
+  "reps": 10,
+  "warmup": 3,
+  "device": "cuda",
+  "gpu_name": "NVIDIA GeForce RTX 5070",
+  "torch_version": "2.11.0+cu128",
+  "rows": [
+    {
+      "model": "resnet18",
+      "method": "vanilla",
+      "views": 1,
+      "batch_size": 32,
+      "reps": 10,
+      "device": "cuda",
+      "median_batch_ms": 8.270649996120483,
+      "ms_per_image": 0.2584578123787651,
+      "images_per_second": 3869.1033975576593,
+      "overhead_vs_vanilla": 1.0,
+      "peak_cuda_alloc_mb": 310.6015625
+    },
+    {
+      "model": "resnet18",
+      "method": "final_combined",
+      "views": 15,
+      "batch_size": 32,
+      "reps": 10,
+      "device": "cuda",
+      "median_batch_ms": 157.1608500671573,
+      "ms_per_image": 4.911276564598666,
+      "images_per_second": 203.6130498551382,
+      "overhead_vs_vanilla": 19.002236842434005,
+      "peak_cuda_alloc_mb": 3865.8154296875
+    },
+    {
+      "model": "deit",
+      "method": "vanilla",
+      "views": 1,
+      "batch_size": 32,
+      "reps": 10,
+      "device": "cuda",
+      "median_batch_ms": 10.07565000327304,
+      "ms_per_image": 0.3148640626022825,
+      "images_per_second": 3175.973757485116,
+      "overhead_vs_vanilla": 1.0,
+      "peak_cuda_alloc_mb": 128.88671875
+    },
+    {
+      "model": "deit",
+      "method": "final_combined",
+      "views": 15,
+      "batch_size": 32,
+      "reps": 10,
+      "device": "cuda",
+      "median_batch_ms": 161.65139997610822,
+      "ms_per_image": 5.051606249253382,
+      "images_per_second": 197.9568380151953,
+      "overhead_vs_vanilla": 16.043768880776557,
+      "peak_cuda_alloc_mb": 1738.95703125
+    }
+  ]
+}

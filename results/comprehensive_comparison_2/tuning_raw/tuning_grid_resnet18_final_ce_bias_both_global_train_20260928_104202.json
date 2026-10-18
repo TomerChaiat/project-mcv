@@ -1,0 +1,118 @@
+{
+  "model": "resnet18",
+  "cache_dir": "cache_combined_recheck",
+  "timestamp": "20260928_104202",
+  "grid_size": 1860,
+  "tune_severities": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "split": {
+    "frac_tune": 0.5,
+    "seed": 0
+  },
+  "m_values": [
+    1,
+    2,
+    3
+  ],
+  "ladder_len": 8,
+  "agreement_modes": [
+    "all",
+    "origin"
+  ],
+  "held_out": {
+    "noise": {
+      "config": {
+        "alpha": 1.0,
+        "beta": 0.0,
+        "gamma": 1.0,
+        "tau": 1.0,
+        "standardize": true,
+        "m": 1,
+        "agreement": "all",
+        "view_bias": [],
+        "output_temperature": 1.0
+      },
+      "mean_fused_acc": 0.373079389333725,
+      "mean_orig_acc": 0.35267691779881716,
+      "mean_equal_acc": 0.3676137776114047
+    },
+    "blur": {
+      "config": {
+        "alpha": 1.0,
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tau": 1.0,
+        "standardize": true,
+        "m": 1,
+        "agreement": "all",
+        "view_bias": [],
+        "output_temperature": 1.0
+      },
+      "mean_fused_acc": 0.3752385973930359,
+      "mean_orig_acc": 0.3480949902737683,
+      "mean_equal_acc": 0.3704240419986573
+    },
+    "weather": {
+      "config": {
+        "alpha": 1.0,
+        "beta": 0.0,
+        "gamma": 0.0,
+        "tau": 0.1,
+        "standardize": false,
+        "m": 1,
+        "agreement": "all",
+        "view_bias": [],
+        "output_temperature": 1.0
+      },
+      "mean_fused_acc": 0.3440769612789154,
+      "mean_orig_acc": 0.3153691527179696,
+      "mean_equal_acc": 0.33958526880226353
+    },
+    "digital": {
+      "config": {
+        "alpha": 1.0,
+        "beta": 0.0,
+        "gamma": 0.25,
+        "tau": 1.0,
+        "standardize": true,
+        "m": 2,
+        "agreement": "all",
+        "view_bias": [],
+        "output_temperature": 1.0
+      },
+      "mean_fused_acc": 0.3257731795310974,
+      "mean_orig_acc": 0.3020664340054447,
+      "mean_equal_acc": 0.3212814742191271
+    }
+  },
+  "global": {
+    "config": {
+      "alpha": 1.0,
+      "beta": 0.0,
+      "gamma": 0.5,
+      "tau": 1.0,
+      "standardize": true,
+      "m": 1,
+      "agreement": "all",
+      "view_bias": [],
+      "output_temperature": 1.0
+    },
+    "mean_fused_acc": 0.3547486960887909,
+    "mean_orig_acc": 0.33006576356788475,
+    "mean_equal_acc": 0.3501236437012752
+  },
+  "backend": {
+    "name": "fast_torch_grid",
+    "device": "cuda",
+    "config_batch": 64,
+    "signal_chunk": 256,
+    "signal_pair_batch": 32,
+    "signal_backend": "torch",
+    "tf32": false
+  }
+}

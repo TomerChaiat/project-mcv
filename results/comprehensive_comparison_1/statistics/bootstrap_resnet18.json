@@ -1,0 +1,26 @@
+{
+  "model": "resnet18",
+  "combined_cache": "cache_combined_recheck",
+  "spatial_cache": "cache_spatial",
+  "tuning": "C:\\Users\\User\\OneDrive - Technion\\\u05e8\u05d0\u05d9\u05d9\u05d4 \u05de\u05de\u05d5\u05d7\u05e9\u05d1\u05ea \u05de\u05d5\u05d3\u05e8\u05e0\u05d9\u05ea - 00970202\\project\\project-mcv\\results\\final_comprehensive_20260927_182908\\tuning_global\\resnet18_grid_global.json",
+  "n_boot": 5000,
+  "fused_minus_original": {
+    "n_conditions": 75,
+    "point": 0.02605028386050284,
+    "ci95": [
+      0.02490929981075966,
+      0.027196539605298723
+    ],
+    "p_le_zero": 0.0
+  },
+  "fused_minus_spatial": {
+    "n_conditions": 75,
+    "point": 0.007223573938902406,
+    "ci95": [
+      0.006353068396864018,
+      0.00809948634766153
+    ],
+    "p_le_zero": 0.0
+  },
+  "elapsed_s": 77.86415123939514
+}

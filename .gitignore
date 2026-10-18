@@ -8,7 +8,6 @@ data/*
 !data/subset_classes.json
 !data/clean_name_map.json
 .venv/
-results/
 report/
 .vscode/
 .conda/

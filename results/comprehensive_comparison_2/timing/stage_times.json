@@ -1,0 +1,7 @@
+{
+    "grid_warm_start_seconds":  111.48442019999999,
+    "ce_bias_tuning_both_models_seconds":  123.9266486,
+    "heldout_evaluation_seconds":  88.4306742,
+    "bootstrap_seconds":  135.7499473,
+    "benchmark_seconds":  8.5054632999999988
+}

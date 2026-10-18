@@ -47,6 +47,8 @@ def main():
     ap.add_argument("--subset", default="data/subset_classes.json")
     ap.add_argument("--n-per-class", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=64)
+    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--prefetch-batches", type=int, default=2)
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--cache-dir", default="cache_spatial")
     ap.add_argument("--corner-mode", choices=["resize", "pad"], default="resize",

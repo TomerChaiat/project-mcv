@@ -1,0 +1,60 @@
+{
+  "model": "resnet18",
+  "cache_dir": "cache_combined_recheck",
+  "timestamp": "20260927_183008",
+  "grid_size": 1860,
+  "tune_severities": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "split": {
+    "frac_tune": 0.5,
+    "seed": 0
+  },
+  "m_values": [
+    1,
+    2,
+    3
+  ],
+  "ladder_len": 8,
+  "agreement_modes": [
+    "all",
+    "origin"
+  ],
+  "held_out": {},
+  "global": {
+    "config": {
+      "alpha": 1.0,
+      "beta": 0.0,
+      "gamma": 0.5,
+      "tau": 1.0,
+      "standardize": true,
+      "m": 1,
+      "agreement": "all",
+      "view_bias": [],
+      "output_temperature": 1.0
+    },
+    "mean_fused_acc": 0.3547486960887909,
+    "mean_orig_acc": 0.33006576356788475,
+    "mean_equal_acc": 0.3501236437012752
+  },
+  "backend": {
+    "name": "fast_torch_grid",
+    "device": "cuda",
+    "config_batch": 64,
+    "signal_chunk": 256,
+    "signal_pair_batch": 32,
+    "signal_backend": "torch",
+    "tf32": false
+  },
+  "final_scope": {
+    "label": "ResNet18 global grid",
+    "selection": "single global configuration",
+    "tuning_data": "all corruption types x all requested severities, tune half only",
+    "evaluation_data": "held-out test half only",
+    "source_tuning": "C:\\Users\\User\\OneDrive - Technion\\\u05e8\u05d0\u05d9\u05d9\u05d4 \u05de\u05de\u05d5\u05d7\u05e9\u05d1\u05ea \u05de\u05d5\u05d3\u05e8\u05e0\u05d9\u05ea - 00970202\\project\\project-mcv\\results\\final_comprehensive_20260927_182908\\tuning_raw\\tuning_grid_resnet18_final_global_train_20260927_183008.json"
+  }
+}

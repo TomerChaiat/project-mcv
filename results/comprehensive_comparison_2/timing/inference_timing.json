@@ -1,0 +1,65 @@
+{
+  "definition": "GPU compute from an already-loaded 256x256 tensor; disk/JPEG I/O excluded for both approaches",
+  "vanilla": "center crop + ImageNet normalization + one model forward + softmax",
+  "final_combined": "8 fixed spectral views + 7 additional spatial views + 15 forwards + confidence/agreement/stability + CE+bias fusion/calibration",
+  "batch_size": 32,
+  "reps": 10,
+  "warmup": 3,
+  "device": "cuda",
+  "gpu_name": "NVIDIA GeForce RTX 5070",
+  "torch_version": "2.11.0+cu128",
+  "rows": [
+    {
+      "model": "resnet18",
+      "method": "vanilla",
+      "views": 1,
+      "batch_size": 32,
+      "reps": 10,
+      "device": "cuda",
+      "median_batch_ms": 7.183049980085343,
+      "ms_per_image": 0.22447031187766697,
+      "images_per_second": 4454.932109440759,
+      "overhead_vs_vanilla": 1.0,
+      "peak_cuda_alloc_mb": 310.6015625
+    },
+    {
+      "model": "resnet18",
+      "method": "final_combined",
+      "views": 15,
+      "batch_size": 32,
+      "reps": 10,
+      "device": "cuda",
+      "median_batch_ms": 139.26294998964295,
+      "ms_per_image": 4.351967187176342,
+      "images_per_second": 229.78114424819992,
+      "overhead_vs_vanilla": 19.38771836138447,
+      "peak_cuda_alloc_mb": 3865.8154296875
+    },
+    {
+      "model": "deit",
+      "method": "vanilla",
+      "views": 1,
+      "batch_size": 32,
+      "reps": 10,
+      "device": "cuda",
+      "median_batch_ms": 8.334200014360249,
+      "ms_per_image": 0.2604437504487578,
+      "images_per_second": 3839.6006749132944,
+      "overhead_vs_vanilla": 1.0,
+      "peak_cuda_alloc_mb": 128.88671875
+    },
+    {
+      "model": "deit",
+      "method": "final_combined",
+      "views": 15,
+      "batch_size": 32,
+      "reps": 10,
+      "device": "cuda",
+      "median_batch_ms": 142.48989999759942,
+      "ms_per_image": 4.452809374924982,
+      "images_per_second": 224.5773209226697,
+      "overhead_vs_vanilla": 17.097009881222206,
+      "peak_cuda_alloc_mb": 1738.95703125
+    }
+  ]
+}

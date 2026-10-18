@@ -1,0 +1,49 @@
+{
+  "repo": "C:\\Users\\User\\OneDrive - Technion\\\u05e8\u05d0\u05d9\u05d9\u05d4 \u05de\u05de\u05d5\u05d7\u05e9\u05d1\u05ea \u05de\u05d5\u05d3\u05e8\u05e0\u05d9\u05ea - 00970202\\project\\project-mcv",
+  "combined": {
+    "root": "C:\\Users\\User\\OneDrive - Technion\\\u05e8\u05d0\u05d9\u05d9\u05d4 \u05de\u05de\u05d5\u05d7\u05e9\u05d1\u05ea \u05de\u05d5\u05d3\u05e8\u05e0\u05d9\u05ea - 00970202\\project\\project-mcv\\cache_combined_recheck",
+    "models": {
+      "resnet18": {
+        "present": 76,
+        "expected": 76,
+        "missing": []
+      },
+      "deit": {
+        "present": 76,
+        "expected": 76,
+        "missing": []
+      }
+    }
+  },
+  "spatial": {
+    "root": "C:\\Users\\User\\OneDrive - Technion\\\u05e8\u05d0\u05d9\u05d9\u05d4 \u05de\u05de\u05d5\u05d7\u05e9\u05d1\u05ea \u05de\u05d5\u05d3\u05e8\u05e0\u05d9\u05ea - 00970202\\project\\project-mcv\\cache_spatial",
+    "models": {
+      "resnet18": {
+        "present": 76,
+        "expected": 76,
+        "missing": []
+      },
+      "deit": {
+        "present": 76,
+        "expected": 76,
+        "missing": []
+      }
+    }
+  },
+  "combined_view_counts": {
+    "resnet18": 15,
+    "deit": 15
+  },
+  "protocol": {
+    "corruptions": 15,
+    "severities": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "conditions_per_model": 75,
+    "plus_clean": true
+  }
+}

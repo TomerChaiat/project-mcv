@@ -1,0 +1,7 @@
+{
+    "grid_tuning_seconds":  110.2650798,
+    "deit_ce_bias_tuning_seconds":  68.2762214,
+    "heldout_evaluation_seconds":  102.760988,
+    "bootstrap_seconds":  159.5853492,
+    "benchmark_seconds":  9.982702999999999
+}
