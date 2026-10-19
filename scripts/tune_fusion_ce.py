@@ -37,16 +37,53 @@ from src.evaluation import device_from_arg, signal_variants_torch
 
 
 VARIANTS = {
-    "base": ("ce", False, False),
-    "bias": ("ce_bias", True, False),
-    "unconstrained": ("ce_unconstrained", False, True),
+    "base": ("ce", False, False, False),
+    "bias": ("ce_bias", True, False, False),
+    "unconstrained": ("ce_unconstrained", False, True, False),
+    # alpha=beta=gamma locked at 0, only the fixed per-view bias is fit.
+    # If this matches "bias" closely, the per-image C/A/S profile isn't
+    # doing the work.
+    "bias_only": ("ce_bias_only", True, False, True),
 }
+
+
+#: order of the signals in the CE feature vector (theta = alpha, beta, gamma)
+SIGNALS = ("C", "A", "S")
+
+
+def free_signal_mask(signals):
+    """Which of C, A, S are fitted; None = all three. Others stay at 0."""
+    if signals is None:
+        return (True, True, True)
+    unknown = set(signals) - set(SIGNALS)
+    if unknown:
+        raise ValueError(f"unknown signals {sorted(unknown)}; choose from {SIGNALS}")
+    return tuple(name in signals for name in SIGNALS)
+
+
+def signal_keys(m_values, agreement_modes, signals):
+    """(m, agreement) pairs to fit. A held-out S makes m irrelevant and a
+    held-out A makes the agreement mode irrelevant, so only the first value of
+    each is kept instead of fitting identical models several times."""
+    free_c, free_a, free_s = free_signal_mask(signals)
+    ms = list(m_values) if free_s else list(m_values)[:1]
+    agreements = list(agreement_modes) if free_a else list(agreement_modes)[:1]
+    return [(m, a) for m in ms for a in agreements]
+
+
+def signal_label(signals, agreement_modes):
+    """Short name of a signal subset for file names, e.g. 'CS', 'CAoS', 'none'.
+    'Ao' marks agreement measured against the original view only."""
+    if signals is None:
+        return "CAS"
+    origin_only = list(agreement_modes) == ["origin"]
+    parts = [("Ao" if name == "A" and origin_only else name) for name in SIGNALS if name in signals]
+    return "".join(parts) or "none"
 
 
 def latest_grid_tuning(model_name, tag, results_dir):
     patterns = [
         Path(results_dir) / f"tuning_grid_{model_name}_{tag}_*.json",
-        Path(results_dir) / f"tuning_fast_{model_name}_{tag}_*.json",  # development-era compatibility
         Path(results_dir) / f"tuning_{model_name}_{tag}_*.json",
     ]
     files = []
@@ -348,9 +385,9 @@ def _variant_list(args):
     if args.variants:
         # Preserve user order while removing duplicates.
         return list(dict.fromkeys(args.variants))
-    # Backward-compatible single-variant behavior for old commands.
+    # Single-variant shorthand flags.
     if args.view_bias and args.allow_negative:
-        raise SystemExit("legacy flags do not define bias+unconstrained; use --variants")
+        raise SystemExit("--view-bias with --allow-negative is not a variant; use --variants")
     if args.view_bias:
         return ["bias"]
     if args.allow_negative:
@@ -366,7 +403,9 @@ def _fit_one_key(
     args,
     view_bias,
     allow_negative,
+    theta_fixed_zero,
     device,
+    free_signals=None,
 ):
     backend = args.optimizer_backend
     if backend == "auto":
@@ -382,6 +421,8 @@ def _fit_one_key(
         maxiter=args.maxiter,
         nonnegative=not allow_negative,
         view_bias=view_bias,
+        theta_fixed_zero=theta_fixed_zero,
+        free_signals=free_signals,
     )
     if backend == "torch":
         return fit_coefficients_torch(
@@ -396,7 +437,7 @@ def _fit_one_key(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--models", nargs="+", default=["resnet18", "deit"], choices=["resnet18", "deit"])
+    ap.add_argument("--models", nargs="+", default=["resnet18", "deit"], choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--cache-dir", default="cache_fixed")
     ap.add_argument("--tag", default=None)
     ap.add_argument("--out", default="results")
@@ -414,11 +455,17 @@ def main():
     ap.add_argument("--optimizer-seed", type=int, default=0)
     ap.add_argument("--maxiter", type=int, default=500)
 
-    # Old single-variant flags remain accepted.
+    # Single-variant shorthand (prefer --variants).
     ap.add_argument("--allow-negative", action="store_true")
     ap.add_argument("--view-bias", action="store_true")
-    # New mode: one process, one signal/RAM precompute, many CE variants.
+    # Several CE variants in one process, sharing one signal precompute.
     ap.add_argument("--variants", nargs="+", choices=list(VARIANTS), default=None)
+    ap.add_argument(
+        "--signals", nargs="*", choices=list(SIGNALS), default=None,
+        help="fit only these signal coefficients and hold the others at 0 "
+             "(e.g. --signals C S); '--signals' alone fits none, i.e. bias only "
+             "with --variants bias. The method name gets a '_sig<subset>' suffix.",
+    )
 
     ap.add_argument("--optimizer-backend", choices=["auto", "torch", "numpy"], default="auto")
     ap.add_argument("--ce-dtype", choices=["float32", "float64"], default="float32")
@@ -446,7 +493,12 @@ def main():
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     device = device_from_arg(args.device)
-    keys = [(m, a) for m in args.m_values for a in args.agreement_modes]
+    keys = signal_keys(args.m_values, args.agreement_modes, args.signals)
+    free_signals = free_signal_mask(args.signals)
+    method_suffix = (
+        "" if args.signals is None
+        else "_sig" + signal_label(args.signals, args.agreement_modes)
+    )
     variants = _variant_list(args)
 
     scales = np.array([1.0], dtype=np.float32) if args.no_scale_tuning else np.geomspace(
@@ -482,7 +534,8 @@ def main():
         )
 
         for variant in variants:
-            method, view_bias, allow_negative = VARIANTS[variant]
+            method, view_bias, allow_negative, theta_fixed_zero = VARIANTS[variant]
+            method += method_suffix
             print(f"\n--- {method} ---")
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             record = {
@@ -498,6 +551,9 @@ def main():
                 "standardize": True,
                 "nonnegative": not allow_negative,
                 "view_bias": bool(view_bias),
+                "theta_fixed_zero": bool(theta_fixed_zero),
+                "signals": list(SIGNALS) if args.signals is None else list(args.signals),
+                "free_signals": list(free_signals),
                 "l2": args.l2,
                 "bias_l2": args.bias_l2,
                 "eps": args.eps,
@@ -522,7 +578,13 @@ def main():
                     )
                     if X is None:
                         continue
-                    starts = [grid_start] if grid_start is not None else None
+                    # A grid warm start sets theta != 0, which is meaningless
+                    # (and unsatisfiable, given lb=ub=0) for the bias-only
+                    # ablation -- start it from bias-only restarts instead.
+                    starts = (
+                        [grid_start] if grid_start is not None and not theta_fixed_zero
+                        else None
+                    )
                     theta, bias, objective, res = _fit_one_key(
                         X,
                         p_true,
@@ -530,7 +592,9 @@ def main():
                         args=args,
                         view_bias=view_bias,
                         allow_negative=allow_negative,
+                        theta_fixed_zero=theta_fixed_zero,
                         device=device,
+                        free_signals=free_signals,
                     )
                     # Avoid another full-data CE pass: objective is exactly
                     # NLL + the two quadratic penalties.

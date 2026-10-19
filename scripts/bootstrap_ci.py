@@ -4,11 +4,12 @@ spatial-TTA baseline? evaluate.py reports point estimates only; this adds
 error bars to the same statistic (mean accuracy over corruptions x severities,
 each condition itself a mean over its held-out images).
 
-Resampling is paired and within-condition: for each of the 75 (corruption,
-severity) conditions, images are bootstrap-resampled (with replacement, same
-N), and the SAME resampled indices are used for every predictor being
-compared, so the bootstrap targets the paired difference directly rather than
-two independent CIs that would overstate the uncertainty on their gap.
+Resampling is a paired cluster bootstrap over images (src/bootstrap.py): one
+draw of validation images per replicate, applied to every (corruption,
+severity) condition at once - the same images appear in all 75 conditions, so
+resampling each condition independently would understate the variance. The
+same draw is used for both predictors being compared, so the bootstrap
+targets the paired difference directly.
 
     python scripts/bootstrap_ci.py                      # both models, cache_fixed
     python scripts/bootstrap_ci.py --models resnet18 --n-boot 5000
@@ -25,21 +26,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from src import cache
-from src.metrics import FusionConfig, top1
+from src.bootstrap import cluster_bootstrap, image_keys
+from src.metrics import BASELINE_TAU, FusionConfig, top1
 from src.evaluation import device_from_arg, fused_correct_many_torch
 from src.splits import CORRUPTION_FAMILY, tune_test_masks
 
 
-def latest_tuning(model_name, tag):
-    """Path of the newest results/tuning_<model>[_<tag>]_*.json, or exit."""
-    pattern = f"results/tuning_{model_name}_{tag}_*.json" if tag else f"results/tuning_{model_name}_2*.json"
+def latest_tuning(model_name, tag, results_dir="results"):
+    """Path of the newest <results_dir>/tuning_<model>[_<tag>]_*.json, or exit."""
+    pattern = (f"{results_dir}/tuning_{model_name}_{tag}_*.json" if tag
+               else f"{results_dir}/tuning_{model_name}_2*.json")
     files = sorted(glob.glob(pattern))
     if not files:
         raise SystemExit(f"no {pattern} found -- run tune_fusion.py first")
     return files[-1]
 
 
-def config_picker(model_name, tag):
+def config_picker(model_name, tag, results_dir="results"):
     """Build the corruption -> FusionConfig mapping from the newest tuning
     json (same held-out-family-or-global logic as evaluate.py's).
 
@@ -47,7 +50,7 @@ def config_picker(model_name, tag):
         (pick, path) where `pick(corruption)` -> FusionConfig and `path` is
         the tuning json it came from.
     """
-    path = latest_tuning(model_name, tag)
+    path = latest_tuning(model_name, tag, results_dir)
     tune = json.loads(Path(path).read_text())
     held = {fam: FusionConfig.from_dict(tune["held_out"][fam]["config"])
             for fam in tune["held_out"]}
@@ -60,17 +63,31 @@ def config_picker(model_name, tag):
     return pick, path
 
 
+#: training-free fusion baselines as fusion configs (same definitions as
+#: score_many_torch's equal_acc / conf_acc / agree_acc), so they share the
+#: fused predictor's signal pass
+BASELINE_CONFIGS = {
+    "equal": FusionConfig(0.0, 0.0, 0.0, BASELINE_TAU, True, 1, "all"),
+    "conf": FusionConfig(1.0, 0.0, 0.0, BASELINE_TAU, True, 1, "all"),
+    "agree": FusionConfig(0.0, 1.0, 0.0, BASELINE_TAU, True, 1, "all"),
+}
+#: (key, label) of every predictor bootstrapped against the original
+VS_ORIG = [("view1", "mild LP (0.90) - orig"), ("equal", "equal avg - orig"),
+           ("conf", "confidence-only - orig"), ("agree", "agreement-only - orig")]
+
+
 def per_image_correctness(model_name, cache_dir, tag, ladder_len, severities,
                           frac_tune, split_seed, *, device,
-                          signal_chunk=256, signal_pair_batch=32):
+                          signal_chunk=256, signal_pair_batch=32,
+                          results_dir="results", spatial_cache="cache_spatial"):
     """Fast orig/fused/(optional spatial) per-image correctness.
 
-    Fusion signals run on torch/CUDA instead of the legacy NumPy precompute.
+    Fusion signals run on torch/CUDA.
     """
     cache.CACHE_ROOT = Path(cache_dir)
-    pick, tuning_path = config_picker(model_name, tag)
+    pick, tuning_path = config_picker(model_name, tag, results_dir)
 
-    spatial_root = Path("cache_spatial")
+    spatial_root = Path(spatial_cache)
     has_spatial = spatial_root.exists()
     conditions = []
     for corruption in CORRUPTION_FAMILY:
@@ -84,7 +101,7 @@ def per_image_correctness(model_name, cache_dir, tag, ladder_len, severities,
             labels = d["labels"][mask]
             cfg = pick(corruption)
             fused_map, orig_correct = fused_correct_many_torch(
-                probs, labels, {"fused": cfg}, ladder_len=ladder_len,
+                probs, labels, {"fused": cfg, **BASELINE_CONFIGS}, ladder_len=ladder_len,
                 device=device, signal_chunk=signal_chunk,
                 signal_pair_batch=signal_pair_batch,
             )
@@ -101,32 +118,29 @@ def per_image_correctness(model_name, cache_dir, tag, ladder_len, severities,
                     sp = ds["probs"][idx][mask].astype(np.float32)
                     tta_correct = top1(sp.mean(axis=1)) == labels
 
-            conditions.append({"orig": np.asarray(orig_correct, bool),
+            conditions.append({"keys": image_keys(np.asarray(d["paths"])[mask]),
+                               "orig": np.asarray(orig_correct, bool),
                                "fused": np.asarray(fused_correct, bool),
-                               "tta": tta_correct, "n": int(mask.sum())})
+                               "tta": tta_correct, "n": int(mask.sum()),
+                               "view1": top1(probs[:, 1]) == labels,
+                               **{k: np.asarray(fused_map[k], bool) for k in BASELINE_CONFIGS}})
     return conditions, tuning_path
 
 
-def bootstrap_delta(conditions, key_a, key_b, n_boot, rng):
-    """Vectorized exact paired bootstrap using the empirical A-B distribution."""
-    usable = [c for c in conditions if c[key_a] is not None and c[key_b] is not None]
+def bootstrap_delta(conditions, key_a, key_b, n_boot, seed):
+    """Paired cluster bootstrap of key_a - key_b (see src/bootstrap.py), or None."""
+    usable = [{"keys": c["keys"], "a": c[key_a], "b": c[key_b]}
+              for c in conditions if c[key_a] is not None and c[key_b] is not None]
     if not usable:
         return None
-    deltas = np.zeros(int(n_boot), dtype=np.float64)
-    for c in usable:
-        d = c[key_a].astype(np.int8) - c[key_b].astype(np.int8)
-        n = int(c["n"])
-        counts = np.bincount(d + 1, minlength=3).astype(np.float64)
-        draws = rng.multinomial(n, counts / n, size=int(n_boot))
-        deltas += (draws[:, 2] - draws[:, 0]) / n
-    return deltas / len(usable)
+    return cluster_bootstrap(usable, n_boot=n_boot, seed=seed)
 
 
 def main():
     """Compute and print the bootstrap CIs for one cache, both models."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"],
-                    choices=["resnet18", "deit"])
+                    choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--cache-dir", default="cache_fixed")
     ap.add_argument("--tag", default="cache_fixed")
     ap.add_argument("--ladder-len", type=int, default=None)
@@ -139,9 +153,14 @@ def main():
     ap.add_argument("--signal-chunk", type=int, default=256)
     ap.add_argument("--signal-pair-batch", type=int, default=32)
     ap.add_argument("--out", default="results")
+    ap.add_argument("--results-dir", default="results",
+                    help="where to look for the tuning_<model>_<tag>_*.json")
+    ap.add_argument("--spatial-cache", default="cache_spatial")
+    ap.add_argument("--suffix", default="",
+                    help="appended to the report name, bootstrap_ci_<tag><suffix>.json, "
+                         "e.g. to keep a run against another --spatial-cache separate")
     args = ap.parse_args()
 
-    rng = np.random.default_rng(args.seed)
     device = device_from_arg(args.device)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -154,27 +173,32 @@ def main():
             args.severities, args.frac_tune, args.split_seed,
             device=device, signal_chunk=args.signal_chunk,
             signal_pair_batch=args.signal_pair_batch,
+            results_dir=args.results_dir, spatial_cache=args.spatial_cache,
         )
         print(f"  {len(conditions)} conditions, config: {tuning_path}")
 
         model_report = {"tuning_config": tuning_path, "n_boot": args.n_boot}
-        for key_b, label in [("orig", "fused - orig"), ("tta", "fused - spatial TTA")]:
-            deltas = bootstrap_delta(conditions, "fused", key_b, args.n_boot, rng)
-            if deltas is None:
+        pairs = ([("fused", "orig", "fused - orig"), ("fused", "tta", "fused - spatial TTA"),
+                  ("tta", "orig", "spatial TTA - orig")]
+                 + [(k, "orig", label) for k, label in VS_ORIG])
+        for i, (key_a, key_b, label) in enumerate(pairs):
+            res = bootstrap_delta(conditions, key_a, key_b, args.n_boot, args.seed + i)
+            if res is None:
                 print(f"  {label:22s}: n/a (no spatial cache)")
                 continue
-            point = np.mean([c["fused"].mean() for c in conditions if c[key_b] is not None]) - \
-                    np.mean([c[key_b].mean() for c in conditions if c[key_b] is not None])
-            lo, hi = np.percentile(deltas, [2.5, 97.5])
-            p_le_zero = float(np.mean(deltas <= 0))
-            print(f"  {label:22s}: {point*100:+.2f} pts   95% CI [{lo*100:+.2f}, {hi*100:+.2f}]   "
-                  f"P(delta <= 0) = {p_le_zero:.3f}")
-            model_report[label] = {"point": float(point), "ci95": [float(lo), float(hi)],
-                                   "p_le_zero": p_le_zero}
+            lo, hi = res["ci95"]
+            print(f"  {label:22s}: {res['point']*100:+.2f} pts   95% CI [{lo*100:+.2f}, {hi*100:+.2f}]   "
+                  f"P(delta <= 0) = {res['p_le_zero']:.3f}  ({res['n_conditions']} conditions, "
+                  f"{res['n_images']} images)")
+            model_report[label] = res
         report[model_name] = model_report
 
-    path = out_dir / f"bootstrap_ci_{args.tag}.json"
-    path.write_text(json.dumps(report, indent=2))
+    # Merge into an existing report so models bootstrapped in separate runs
+    # (e.g. convnext after resnet18/deit) don't overwrite each other.
+    path = out_dir / f"bootstrap_ci_{args.tag}{args.suffix}.json"
+    merged = json.loads(path.read_text()) if path.exists() else {}
+    merged.update(report)
+    path.write_text(json.dumps(merged, indent=2))
     print(f"\nsaved {path}")
 
 

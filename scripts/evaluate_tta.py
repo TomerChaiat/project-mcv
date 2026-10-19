@@ -45,7 +45,7 @@ def main():
     """Score the spatial-TTA cache for each model and write the results table."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"],
-                    choices=["resnet18", "deit"])
+                    choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
     ap.add_argument("--eval-half", choices=["test", "all"], default="test")
     ap.add_argument("--split-seed", type=int, default=0)
@@ -79,7 +79,11 @@ def main():
         clean_row = None
         if cache.has_condition(model_name, "clean", 0):
             d = cache.load_spatial_condition(model_name, "clean", 0)
-            clean_row = score_condition(d, np.ones(len(d["labels"]), dtype=bool))
+            if args.eval_half == "test":
+                _, mask = tune_test_masks(d["paths"], args.frac_tune, args.split_seed)
+            else:
+                mask = np.ones(len(d["labels"]), dtype=bool)
+            clean_row = score_condition(d, mask)
 
         _report(model_name, rows, clean_row, out_dir, stamp)
 

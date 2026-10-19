@@ -8,7 +8,7 @@ condition is released.
 Example
 -------
 python scripts/evaluate_many.py \
-  --model resnet18 --cache-dir cache_fixed_fresh \
+  --model resnet18 --cache-dir cache_fixed \
   --method fixed_grid results/...grid.json \
   --method fixed_ce results/...ce.json \
   --method fixed_ce_bias results/...bias.json \
@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from src import cache
-from src.evaluation import device_from_arg, score_many_torch
+from src.evaluation import device_from_arg, fit_vanilla_temperature, score_many_torch
 from src.metrics import FusionConfig
 from src.splits import CORRUPTION_FAMILY, tune_test_masks
 from scripts.evaluate import _report
@@ -52,7 +52,7 @@ def make_picker(tuning_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, choices=["resnet18", "deit"])
+    ap.add_argument("--model", required=True, choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--cache-dir", required=True)
     ap.add_argument(
         "--method", nargs=2, action="append", required=True,
@@ -74,6 +74,8 @@ def main():
         help="optional npz of per-image fused/original correctness for later bootstrap",
     )
     ap.add_argument("--quiet-progress", action="store_true")
+    ap.add_argument("--no-vanilla-calibration", action="store_true",
+                    help="skip fitting the calibrated-vanilla baseline (same flag as evaluate.py)")
     args = ap.parse_args()
 
     methods = []
@@ -91,6 +93,17 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     device = device_from_arg(args.device)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Calibrated-vanilla baseline, exactly as in evaluate.py: one temperature
+    # for view 0 fit on the tune half. Without it, orig_ece_calibrated would
+    # silently equal the *uncalibrated* ECE and flatter the fused predictor.
+    orig_temp = 1.0
+    if not args.no_vanilla_calibration:
+        orig_temp, cal_nll = fit_vanilla_temperature(
+            args.cache_dir, args.model, list(CORRUPTION_FAMILY), args.severities,
+            frac_tune=args.frac_tune, split_seed=args.split_seed, device=device,
+        )
+        print(f"  calibrated-vanilla baseline: T={orig_temp:.3g} (tune-half NLL {cal_nll:.4f})")
 
     rows = {tag: [] for tag, _, _ in methods}
     clean_rows = {tag: None for tag, _, _ in methods}
@@ -123,6 +136,7 @@ def main():
                     signal_chunk=args.signal_chunk,
                     signal_pair_batch=args.signal_pair_batch,
                     return_correctness=True,
+                    orig_temperature=orig_temp,
                 )
                 key0 = f"{corruption}__{sev}"
                 correctness[f"{key0}__orig"] = corr["__orig__"]
@@ -137,6 +151,7 @@ def main():
                     device=device,
                     signal_chunk=args.signal_chunk,
                     signal_pair_batch=args.signal_pair_batch,
+                    orig_temperature=orig_temp,
                 )
 
             for tag, _, _ in methods:
@@ -154,17 +169,23 @@ def main():
                 accs = "  ".join(f"{tag}={100*scored[tag]['fused_acc']:.2f}%" for tag, _, _ in methods)
                 print(f"  {corruption:18s}/{sev}: {accs}  [{time.time()-tc:.2f}s]")
 
-    # Clean uses all images and the global config for each tuning JSON.
+    # Clean: global config, same held-out half as the corrupted conditions
+    # (see evaluate.py).
     if cache.has_condition(args.model, "clean", 0):
         tc = time.time()
         d = cache.load_condition(args.model, "clean", 0)
+        if args.eval_half == "test":
+            _, mask = tune_test_masks(d["paths"], args.frac_tune, args.split_seed)
+        else:
+            mask = np.ones(len(d["labels"]), dtype=bool)
         configs = {tag: pick("clean") for tag, _, pick in methods}
         scored = score_many_torch(
-            d["probs"], d["labels"], configs,
+            d["probs"][mask], d["labels"][mask], configs,
             ladder_len=args.ladder_len,
             device=device,
             signal_chunk=args.signal_chunk,
             signal_pair_batch=args.signal_pair_batch,
+            orig_temperature=orig_temp,
         )
         for tag in configs:
             clean_rows[tag] = scored[tag]

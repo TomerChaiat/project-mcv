@@ -8,6 +8,8 @@ optional, but the numbers are only meaningful on the device you'd deploy on).
     python scripts/measure_overhead.py --models resnet18 --batch-size 32
 """
 import argparse
+import json
+from pathlib import Path
 import glob
 import os
 import sys
@@ -68,17 +70,17 @@ def time_profile(model, images, n_reps, warmup=3):
 
 
 @torch.no_grad()
-def time_combined(model, images256, n_reps, warmup=3, spatial_views=range(1, 8)):
+def time_combined(model, images, n_reps, warmup=3, spatial_views=range(1, 8)):
     """Median per-call seconds of filtering + spatial views + running the
     combined profile (see scripts/build_combined_cache.py). `spatial_views`
     selects which of the 7 non-duplicate spatial views to include -- default
     all 7 (15 views total); pass `range(1, 2)` for the hflip-only "lite"
     variant (9 views total, cache_combined_lite)."""
-    device = images256.device
+    device = images.device
     spatial_views = list(spatial_views)
 
     def one_call():
-        spatial = cache.spatial_views(images256)          # (B, 8, 3, 224, 224)
+        spatial = cache.spatial_views(images)          # (B, 8, 3, 224, 224)
         spectral = cache.spectral_views_fixed(spatial[:, 0], cache.FIXED_CUTOFFS)
         views = torch.cat([spectral, spatial[:, spatial_views]], dim=1)
         return cache.view_probs(model, views)
@@ -109,20 +111,17 @@ def load_batch(n, device):
     return torch.stack([cache.load_image(p) for p in paths]).to(device)
 
 
-def load_batch_256(n, device):
-    """Same `n` images as 'load_batch', but 256x256 (spatial-TTA geometry)."""
-    paths = sorted(glob.glob("data/imagenet/val/*/*.JPEG"))[:n]
-    return torch.stack([cache.load_image_256(p) for p in paths]).to(device)
-
-
 def main():
     """Time 1-view, spectral, lite-combined, and full-combined inference per model."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"],
-                    choices=["resnet18", "deit"])
+                    choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--reps", type=int, default=20)
+    ap.add_argument("--out", default="results/inference_overhead.json",
+                    help="JSON with the per-model ms/img and x-overheads (read by make_paper_figures.py)")
     args = ap.parse_args()
+    report = {}
 
     device = torch.device(
         "cuda" if torch.cuda.is_available()
@@ -133,7 +132,6 @@ def main():
           f"combined views: {K + 1 + 7} | combined-lite views: {K + 1 + 1}\n")
 
     images = load_batch(args.batch_size, device)
-    images256 = load_batch_256(args.batch_size, device)
 
     print(f"{'model':>10} {'1-view':>9} {'spectral':>10} {'x':>6} "
           f"{'lite (9v)':>10} {'x':>6} {'combined (15v)':>15} {'x':>6}  (ms/img)")
@@ -142,13 +140,25 @@ def main():
 
         t_single = time_forward(model, normalize_batch(images), args.reps) / args.batch_size
         t_profile = time_profile(model, images, args.reps) / args.batch_size
-        t_lite = time_combined(model, images256, args.reps, spatial_views=range(1, 2)) / args.batch_size
-        t_combined = time_combined(model, images256, args.reps) / args.batch_size
+        t_lite = time_combined(model, images, args.reps, spatial_views=range(1, 2)) / args.batch_size
+        t_combined = time_combined(model, images, args.reps) / args.batch_size
 
+        report[model_name] = {
+            "single_ms": t_single * 1e3, "spectral_ms": t_profile * 1e3,
+            "lite_ms": t_lite * 1e3, "combined_ms": t_combined * 1e3,
+            "spectral_x": t_profile / t_single, "lite_x": t_lite / t_single,
+            "combined_x": t_combined / t_single,
+        }
         print(f"{model_name:>10} {t_single * 1e3:>9.2f} {t_profile * 1e3:>10.2f} "
               f"{t_profile / t_single:>5.1f}x {t_lite * 1e3:>10.2f} "
               f"{t_lite / t_single:>5.1f}x {t_combined * 1e3:>15.2f} "
               f"{t_combined / t_single:>5.1f}x")
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"batch_size": args.batch_size, "reps": args.reps,
+                               "device": str(device), "models": report}, indent=2))
+    print(f"\nsaved {out}")
 
 
 def normalize_batch(images):
