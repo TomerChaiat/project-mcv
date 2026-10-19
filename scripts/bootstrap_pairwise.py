@@ -1,11 +1,12 @@
 """Paired bootstrap for any two cached predictors.
 
+Optimizations over the original script:
 - if A and B use the same cache, each condition is loaded only once;
 - if several fused predictors share that cache, pairwise JSD/signals are
   computed once on the GPU for all of them;
-- resampling is a paired *cluster* bootstrap over images (src/bootstrap.py):
-  the same validation images appear in every condition, so one draw of images
-  is applied to all conditions at once.
+- bootstrap resampling is vectorized exactly through the empirical paired
+  difference distribution {-1,0,+1}, eliminating the Python loop over every
+  image in every bootstrap replicate.
 """
 from __future__ import annotations
 
@@ -21,7 +22,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from src import cache
-from src.bootstrap import cluster_bootstrap, image_keys
 from src.evaluation import device_from_arg, fused_correct_many_torch
 from src.metrics import FusionConfig
 from src.splits import CORRUPTION_FAMILY, tune_test_masks
@@ -136,7 +136,6 @@ def paired_conditions(args, device):
                 if rec is None:
                     continue
                 paths, aa, bb = rec
-                keys = image_keys(paths)
                 n = len(aa)
             else:
                 a = _one_side(
@@ -158,13 +157,11 @@ def paired_conditions(args, device):
                     continue
                 aa = np.asarray([v for _, v in common], dtype=bool)
                 bb = np.asarray([map_b[p] for p, _ in common], dtype=bool)
-                keys = image_keys([p for p, _ in common])
                 n = len(aa)
 
             out.append({
                 "corruption": corruption,
                 "severity": sev,
-                "keys": keys,
                 "a": aa,
                 "b": bb,
                 "n": n,
@@ -175,18 +172,37 @@ def paired_conditions(args, device):
 
 
 def bootstrap(conditions, n_boot, seed):
-    """Paired cluster bootstrap over images; returns (point, lo, hi, p_le_zero).
+    """Exact paired nonparametric bootstrap, vectorized by difference counts.
 
-    Each condition record needs 'keys' (image ids), 'a' and 'b'.
+    For one image, d = correct_A - correct_B is in {-1,0,+1}.  Resampling paired
+    image indices and then averaging A-B is therefore exactly equivalent to
+    drawing N values from the empirical three-category distribution of d.  A
+    multinomial draw gives those category counts directly, without allocating
+    N bootstrap indices or looping over images.
     """
-    out = cluster_bootstrap(conditions, n_boot=n_boot, seed=seed)
-    lo, hi = out["ci95"]
-    return out["point"], lo, hi, out["p_le_zero"]
+    rng = np.random.default_rng(seed)
+    deltas = np.zeros(int(n_boot), dtype=np.float64)
+    points = []
+
+    for c in conditions:
+        d = c["a"].astype(np.int8) - c["b"].astype(np.int8)
+        n = int(c["n"])
+        counts = np.bincount(d + 1, minlength=3).astype(np.float64)
+        p = counts / n
+        draws = rng.multinomial(n, p, size=int(n_boot))
+        # columns correspond to d=-1,0,+1
+        deltas += (draws[:, 2] - draws[:, 0]) / n
+        points.append(float(d.mean()))
+
+    deltas /= len(conditions)
+    point = float(np.mean(points))
+    lo, hi = np.percentile(deltas, [2.5, 97.5])
+    return point, float(lo), float(hi), float(np.mean(deltas <= 0.0))
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, choices=["resnet18", "deit", "convnext"])
+    ap.add_argument("--model", required=True, choices=["resnet18", "deit"])
     for side in ("a", "b"):
         ap.add_argument(f"--{side}-mode", choices=["fused", "original", "spatial"], required=True)
         ap.add_argument(f"--{side}-cache", required=True)
@@ -226,7 +242,7 @@ def main():
         "ci95": [lo, hi],
         "p_le_zero": p_le_zero,
         "elapsed_s": time.time() - t0,
-        "bootstrap_impl": "paired cluster bootstrap over images (src/bootstrap.py)",
+        "bootstrap_impl": "paired empirical-difference multinomial (exact distribution)",
     }
     print(
         f"A - B: {point*100:+.3f} pts  95% CI [{lo*100:+.3f}, {hi*100:+.3f}]  "

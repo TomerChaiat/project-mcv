@@ -40,7 +40,7 @@ def main():
     """Iterate (model, corruption, severity), compute each spatial profile, save to cache_spatial/."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"],
-                    choices=["resnet18", "deit", "convnext"])
+                    choices=["resnet18", "deit"])
     ap.add_argument("--corruptions", nargs="+",
                     default=STANDARD_CORRUPTIONS + ["clean"])
     ap.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
@@ -51,9 +51,6 @@ def main():
     ap.add_argument("--prefetch-batches", type=int, default=2)
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--cache-dir", default="cache_spatial")
-    ap.add_argument("--corner-mode", choices=["resize", "pad"], default="resize",
-                    help="corner crops: 'resize' (196 px resized to 224, the baseline) or "
-                         "'pad' (224 windows of the reflect-padded image, the control)")
     args = ap.parse_args()
 
     cache.CACHE_ROOT = Path(args.cache_dir)
@@ -89,7 +86,7 @@ def main():
             t0 = time.time()
             probs = cache.compute_spatial_condition(
                 model, paths, device, batch_size=args.batch_size,
-                corner_mode=args.corner_mode,
+                workers=args.workers, prefetch_batches=args.prefetch_batches,
             )
             out = cache.save_spatial_condition(
                 model_name, corr, sev, probs=probs, labels=labels, paths=paths,

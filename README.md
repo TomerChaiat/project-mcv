@@ -2,181 +2,186 @@
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c.svg)
-![Models](https://img.shields.io/badge/models-ResNet--18%20%7C%20DeiT--Tiny%20%7C%20ConvNeXt--Tiny-44cc11.svg)
+![Models](https://img.shields.io/badge/models-ResNet--18%20%7C%20DeiT--Tiny-44cc11.svg)
 ![Benchmark](https://img.shields.io/badge/benchmark-ImageNet--C-f39c12.svg)
 
 > Modern Computer Vision final project - Tomer Chaiat, Omer Yahav, Hadar Etzion, Gil Yashayev, Saar Misk
 
 ## Overview
 
-When a photo is corrupted - sensor noise, blur, fog, low contrast - a frozen
-image classifier often gets it wrong. This project asks whether a
-**spectral stability profile** - the classifier's predictions on
-progressively low-pass-filtered copies of the same image - can tell, image
-by image, which copy to trust, and so improve robustness at test time:
-no retraining, no labels, no knowledge of the corruption.
+When a photo is corrupted - sensor noise, motion blur, fog, low contrast - a
+frozen classifier often gets it wrong.  
+This project asks whether it can recover
+at test time using nothing but its own reactions to that one image: no
+retraining, no labels, no access to the corruption, no weight updates.
 
-Each test image is low-pass filtered at several strengths, every copy goes
-through the same frozen classifier, and the predictions are fused, weighted
-by three per-view trust signals read from the profile: confidence,
-agreement, and stability across neighbouring filter strengths. The same
-fusion is also run together with standard crop/flip test-time
-augmentation (TTA).
+The idea: take the test image, blur it a little, blur it more, blur it a lot,
+and run every version through the same classifier. That gives a short
+trajectory of predictions - a **spectral stability profile**. Where the
+classifier is confident and its answer holds steady as the blur changes, trust
+that view; where it flip-flops, don't.  
+Then average the views with those trust weights.
 
-## Main findings
+### 🗝️ Key Ideas
 
-- **Low-pass views improve corruption robustness** with a frozen model:
-  +1.98 / +1.26 / +0.73 pts mean corrupted accuracy for ResNet-18 / DeiT-Tiny /
-  ConvNeXt-Tiny. Tuned the same way and with the same number of views, they
-  beat crop/flip TTA for ResNet-18 and match it for DeiT and ConvNeXt;
-  combining both kinds of views works best for all three.
-- **They help on corruptions that add high-frequency structure** - noise,
-  pixelation, JPEG - and not on blur or weather, where the detail is
-  already gone. On unseen corruption types the gain holds for noise only.
-- **The stability signal carries the per-image benefit, but only for the
-  noise-sensitive model.** For ResNet-18, weighting views by stability alone
-  adds +0.51 pts over fixed per-view weights, slightly more than all three
-  signals together (+0.46). For DeiT and ConvNeXt, no signal subset adds
-  more than +0.04 pts over fixed per-view weights.
-- **Not CNN vs. Transformer:** ConvNeXt, a CNN, behaves like DeiT, not like
-  ResNet-18. The split is noise-sensitive vs. noise-robust, likely due to the
-  training recipe.
-
-Numbers, confidence intervals and all comparisons: **[`RESULTS.md`](RESULTS.md)**.
-
-## Method
-
-For a test image `x`, build `K + 1` views:
-
-```
-x_0 = x                          the original
-x_k = F^-1( F(x) · M_k )          k = 1 ... 7
-```
-
-`F` is the 2-D DFT and `M_k` a Gaussian low-pass mask with cutoffs
-`(0.9, 0.75, 0.6, 0.45, 0.3, 0.2, 0.12)`. Every view goes through the same
-frozen classifier, and three trust signals are read per view:
-
-| signal | what it measures | formula |
-|---|---|---|
-| `C_k` confidence | how peaked the prediction is | `max_c p_k(c)` |
-| `A_k` agreement | how close this view is to all the others | `-(1/K) Σ_{j≠k} JSD(p_k, p_j)` |
-| `S_k` stability | how close this view is to its neighbours on the ladder | `-mean_{j∈N(k)} JSD(p_k, p_j)` |
-
-They are combined into fusion weights:
-
-```
-r_k = α·C_k + β·A_k + γ·S_k (+ an optional per-view bias b_k)
-w   = softmax(r / τ)
-p*  = Σ_k w_k · p_k
-```
-
-The coefficients are tuned on one half of the images, leaving out each
-corruption family in turn, and everything is evaluated on the other half.
-Two view sets are used: **spectral** (the 8 views above) and **combined**
-(those plus 7 crop/flip views, 15 in total).
+- **Frozen classifier** - no retraining, no corruption labels, no source data, no parameter updates.
+- **Frequency views** - the image low-pass filtered at a ladder of strengths (two ladders compared: per-image energy-adaptive, and fixed absolute cutoffs).
+- **Three trust signals** - confidence, agreement across views, and stability along the ladder, combined into softmax fusion weights.
+- **Combining view families** - the same fusion mechanism also arbitrates across a second, structurally different view family (spatial-TTA crop/flip views), for free since both are already cached, and this beats either family alone - see [`RESULTS.md`](RESULTS.md).
+- **Honest evaluation** - coefficients tuned leave-one-corruption-family-out, on a disjoint half of the images, with bootstrap confidence intervals on every headline delta.
+- **Two architectures** - ResNet-18 and DeiT-Tiny, fed identical pixels, to test whether a CNN and a ViT behave differently.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
-- GPU
-- ~6 GB for the data, ~45 GB for the prediction caches.
+- A GPU for the one-time caching step (everything after runs on CPU)
+- ~15 GB free disk for the data and the profile cache
 
-
-### Installation
+### Installation & Setup
 
 ```bash
-python -m venv .venv && source .venv/bin/activate      # or a conda env
-python -m pip install -r requirements.txt               # install a CUDA build of torch first
-python -m pytest -q test                                # unit tests, no GPU or data needed
+python -m venv .venv && source .venv/bin/activate
+python -m pip install -r requirements.txt
+
+PYTHONPATH=. python test/test_models.py      # pull the pretrained weights
+PYTHONPATH=. python test/test_analysis.py    # should print "all passed"
 ```
 
-### Data
-
-A 100-class subset of ImageNet-C plus the matching clean validation images.
-Full instructions: [`data/README.md`](data/README.md).
+Then build the dataset - a 100-class slice of ImageNet-C plus the matching
+clean validation images. Full instructions and checks are in
+[`data/README.md`](data/README.md); the short version:
 
 ```bash
-python scripts/build_subset.py          # the 100 classes (already in the repo)
-python scripts/fetch_clean_images.py    # clean images -> data/imagenet/val/
-python scripts/fetch_imagenet_c.py      # corrupted images -> data/imagenet-c/ (slow, resumable)
+python scripts/build_subset.py          # choose the 100 classes
+python scripts/fetch_clean_images.py    # clean images
+python scripts/fetch_imagenet_c.py      # corrupted images (safe to stop and re-run)
 ```
 
 ## 💻 Usage
 
-Run everything end to end:
+The pipeline is split so the GPU work happens once and everything after is
+fast NumPy you can re-run while changing parameters:
 
 ```bash
-bash scripts/run_full_pipeline.sh                           # results/ and figures/, logs in results/logs/
-PHASES="extras figures" bash scripts/run_full_pipeline.sh   # only some phases (see the script header)
-PY=/path/to/python bash scripts/run_full_pipeline.sh        # choose the Python env
+python scripts/cache_profiles.py --ladder fixed --cache-dir cache_fixed  # GPU, once: every profile -> cache_fixed/  (~40 min/model)
+python scripts/tune_fusion.py --cache-dir cache_fixed                    # grid-search the fusion coefficients, leave-one-family-out
+python scripts/evaluate.py --cache-dir cache_fixed --tuning auto         # score every condition -> results/eval_<model>_<time>.csv
 ```
 
-Phases: `cache12` -> `build` -> `tune12+cache3` -> `tune3` -> `geo` ->
-`extras` -> `figures`, plus five optional ones: `spatialfit` (the crop/flip
-views tuned the same way as the low-pass views, for a like-for-like
-comparison), `padctl` (crop-geometry check), `extra` (ImageNet-C's 4
-held-out corruptions; fetch them first with `fetch_imagenet_c.py --tarballs
-extra`), `views` (other view families and signals; uses most of a 24 GB
-GPU, so run it on its own) and `signals` (what each per-image trust signal
-contributes).
+Every other script - the spatial-TTA baseline, the combined view-family
+profile, statistical rigor, the signal-ceiling analysis, single-image
+inspection, figure generation - is catalogued with copy-pasteable commands in
+[`scripts/README.md`](scripts/README.md).
 
-Or step by step, for one model and view set:
+## 📊 Results
 
-```bash
-python scripts/cache_profiles.py --models resnet18 --ladder fixed --cache-dir cache_fixed
-python scripts/tune_fusion.py    --models resnet18 --cache-dir cache_fixed --tag cache_fixed_lofo --out results
-python scripts/tune_fusion_ce.py --models resnet18 --cache-dir cache_fixed --tag cache_fixed_lofo --out results \
-                                 --grid-tuning auto --variants base bias unconstrained bias_only
-python scripts/select_method.py  --models resnet18 --tag cache_fixed_lofo --results results
-python scripts/evaluate.py       --models resnet18 --cache-dir cache_fixed --out results --tag cache_fixed_lofo_final \
-                                 --tuning results/tuning_resnet18_cache_fixed_lofo_final_<time>.json
-python scripts/bootstrap_ci.py   --models resnet18 --cache-dir cache_fixed --tag cache_fixed_lofo_final \
-                                 --results-dir results --out results
-python scripts/make_paper_figures.py
+Headline: fusing across **both** a spectral low-pass ladder and a
+spatial-TTA ensemble (crop + flip) beats either view family alone, on both
+architectures, with 95% confidence:
+
+| | ResNet-18 | DeiT-Tiny |
+|---|:--:|:--:|
+| original -> combined fusion | 32.6% -> **34.9%** (+2.4 pts) | 44.0% -> **45.9%** (+2.0 pts) |
+| vs. spatial-TTA alone (95% CI) | +0.47 [+0.39, +0.56] | +0.39 [+0.31, +0.48] |
+
+The full story - spectral-only vs. spatial-only vs. combined, every baseline
+the proposal committed to, the per-view mechanism, and a ceiling analysis
+asking whether the remaining oracle gap is a tuning problem or an information
+problem - is in **[`RESULTS.md`](RESULTS.md)**, plotted versions included
+(`scripts/make_report_figures.py`).
+
+## 🏗️ Architecture
+
+### How it works
+
+For a test image `x` we build `K + 1` views:
+
+```
+x_0 = x                          the original, untouched
+x_k = F^-1( F(x) · M_k )          k = 1 ... K
 ```
 
-Every script and its options: [`scripts/README.md`](scripts/README.md).
+`F` is the 2-D DFT and each `M_k` is a smooth Gaussian low-pass mask. The masks
+get progressively stronger; two cutoff schedules are implemented (see
+`RESULTS.md` for why the fixed one is used for the headline numbers):
+per-image energy-adaptive (`spectral_views`, keep a target fraction of that
+image's own spectral energy) and fixed absolute cutoffs
+(`spectral_views_fixed`), both in `src/cache.py`.
 
-## 🏗️ Project Structure
+Every view goes through the **same frozen classifier**, giving the profile
+`S(x) = (p_0, ... , p_K)`. From it we read three trust signals per view:
 
-| folder | contents | details |
+| signal | what it measures | formula |
 |---|---|---|
-| `src/` | library code: signals, fusion, metrics, caching, models | [src/README.md](src/README.md) |
-| `scripts/` | entry points: data, caching, tuning, evaluation, figures | [scripts/README.md](scripts/README.md) |
-| `data/` | dataset definition and download instructions | [data/README.md](data/README.md) |
-| `test/` | unit tests | [test/README.md](test/README.md) | |
+| `C_k` confidence | how peaked the prediction is | `max_c p_k(c)` |
+| `A_k` agreement | how close this view is to all the others | `-(1/K) Σ_{j≠k} JSD(p_k, p_j)` |
+| `S_k` stability | how close this view is to its ladder neighbours | `-mean_{j∈N(k)} JSD(p_k, p_j)` |
 
-Generated locally (gitignored): `cache_*/` (prediction caches), `results/`
-(JSON/CSV outputs and logs), `figures/` (PDF/PNG figures and LaTeX tables).
+`JSD` is the base-2 Jensen-Shannon divergence, so `C_k ∈ [0, 1]` and
+`A_k, S_k ∈ [-1, 0]`. The three combine into a score and softmax weights, and
+the views are averaged:
 
-## ⚠️ Notes
+```
+r_k = α·C_k + β·A_k + γ·S_k
+w   = softmax(r / τ)
+p*  = Σ_k w_k · p_k
+```
 
-- **Class indices stay 0-999** so the pretrained heads line up;
-  `data/subset_classes.json` maps the 100 classes.
-- **Filtering happens in `[0, 1]` pixel space, before normalisation.**
-  ImageNet-C images are 224x224 and used as-is; clean images get
-  resize(256) -> centre-crop(224), the geometry ImageNet-C was made with.
-- **All three models see identical pixels**; only the normalisation
-  constants differ.
-- **Tuning never sees the corruption family or the images it is scored on.**
+`p*` is judged against the original view alone, an equal-weight average, a
+confidence-only weighting, and a per-image oracle (right if *any* view is - the
+ceiling for any weighting scheme). Full results: [`RESULTS.md`](RESULTS.md).
+
+### Project Structure
+
+```
+src/       library code - the profile maths, metrics, caching, models     -> src/README.md
+scripts/   every entry point - data fetch, GPU caching, tuning, analysis  -> scripts/README.md
+data/      the ImageNet-C subset + clean val, and how to (re)fetch it     -> data/README.md
+test/      unit tests for the profile maths (no GPU or data needed)
+```
+
+Generated locally by the scripts above, gitignored (not in this repo -
+regenerate them any time):
+
+```
+cache/, cache_fixed/, cache_spatial/, cache_combined/   the profile caches
+results/                                                evaluation output
+figures/                                                report-ready PNGs
+```
+
+## ⚠️ Gotchas
+
+- **Class indices stay 0-999.** The subset keeps original ImageNet indices so
+  the pretrained heads line up. `src/imagenet_labels.py` reads
+  `data/subset_classes.json`; never re-index to 0-99.
+- **Filter in `[0, 1]` space, before normalisation.** Order: resize(256) ->
+  centre-crop(224) -> to float -> low-pass -> ImageNet-normalise. ImageNet-C
+  images already carry the corruption; we do not re-corrupt.
+- **Both architectures see identical pixels** - same geometry, only the
+  normalisation constants differ.
+- **Standardise the signals before combining.** Confidence is in `[0, 1]`,
+  agreement and stability in `[-1, 0]`, so without the per-image z-score
+  (`standardize`, on by default) alpha, beta, gamma are not comparable. Whether
+  to standardise is itself part of the tuning grid.
+- **Tuning never sees the family it is scored on**, and tunes on a disjoint
+  image half.
+- **GPU env**: `requirements.txt` needs an env with CUDA torch; see
+  `scripts/README.md` if you have more than one Python env on the machine.
+
 
 ## 🐛 Troubleshooting
 
-- **"missing cache" / every condition skipped** - build the cache for that
-  `--cache-dir` first (or run the `cache12` / `tune12+cache3` phases).
-  `select_method.py` stops with this error rather than choosing a method on
-  part of the conditions.
-- **`missing result: results/...` from `make_paper_figures.py`** - a pipeline
-  phase hasn't run yet; the message names the file.
-- **`ModuleNotFoundError: numpy` / `torch`** - wrong Python environment;
-  activate it or pass `PY=...`.
-- **Out of GPU memory** - lower `--batch-size` (caching) or `--config-batch`
-  (`tune_fusion.py`).
-- **Slow ImageNet-C download** - the server throttles; re-run
-  `fetch_imagenet_c.py`, it resumes.
+- **`no results/tuning_<model>_*.json found`** - run `scripts/tune_fusion.py`
+  before `scripts/evaluate.py --tuning auto`.
+- **`evaluate.py` / `tune_fusion.py` skip everything** - they read `cache/`; run
+  `scripts/cache_profiles.py` first (or pass the matching `--cache-dir`).
+- **ImageNet-C download is slow or drops mid-way** - expected, the source
+  server throttles. Re-run `scripts/fetch_imagenet_c.py`; it resumes.
+- **macOS `CERTIFICATE_VERIFY_FAILED`** when pulling model weights - run the
+  Python cert installer, e.g.
+  `open "/Applications/Python 3.12/Install Certificates.command"`.
 
 ## 📎 Reference
 

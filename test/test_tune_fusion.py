@@ -50,11 +50,11 @@ def test_gpu_scoring_matches_reference_accuracy_cpu():
         config_batch=9,
     )
 
-    reference = np.array([
+    legacy = np.array([
         score(precompute(probs, m=2, agreement="origin"), labels, cfg, full=False)
         for cfg in cfgs
     ], dtype=np.float32)
-    np.testing.assert_allclose(gpu, reference, rtol=0, atol=0)
+    np.testing.assert_allclose(gpu, legacy, rtol=0, atol=0)
 
 
 def test_torch_pairwise_jsd_matches_numpy_cpu():
@@ -122,30 +122,3 @@ def test_torch_signals_preserve_grid_accuracy_cpu():
         cfgs, device=torch.device("cpu"), config_batch=31
     )
     np.testing.assert_array_equal(acc_t, acc_np)
-
-
-def test_signal_subset_flag_helpers():
-    from scripts.tune_fusion_ce import free_signal_mask, signal_keys, signal_label
-
-    assert free_signal_mask(None) == (True, True, True)
-    assert free_signal_mask(["S", "C"]) == (True, False, True)
-    assert free_signal_mask([]) == (False, False, False)
-    try:
-        free_signal_mask(["D"])
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("unknown signal must be rejected")
-
-    ms, ag = [1, 2, 3], ["all", "origin"]
-    assert signal_keys(ms, ag, None) == [(m, a) for m in ms for a in ag]
-    # without S the ladder radius m does not matter, without A the agreement mode
-    assert signal_keys(ms, ag, ["C", "A"]) == [(1, "all"), (1, "origin")]
-    assert signal_keys(ms, ag, ["S"]) == [(1, "all"), (2, "all"), (3, "all")]
-    assert signal_keys(ms, ag, []) == [(1, "all")]
-
-    assert signal_label(None, ag) == "CAS"
-    assert signal_label(["A", "C", "S"], ["all"]) == "CAS"
-    assert signal_label(["C", "A", "S"], ["origin"]) == "CAoS"
-    assert signal_label(["C", "S"], ["origin"]) == "CS"
-    assert signal_label([], ag) == "none"
