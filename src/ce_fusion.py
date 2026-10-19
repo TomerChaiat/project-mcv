@@ -6,8 +6,8 @@ For standardized per-image/per-view signal vectors x_k = (C_k, A_k, S_k):
     w_k = softmax(r)_k
     p*(y) = sum_k w_k p_k(y)
 
-The base fit may constrain theta=(alpha,beta,gamma) to be non-negative or
-leave it unconstrained (signed coefficients).  Optional
+The base fit may constrain theta=(alpha,beta,gamma) to be non-negative or may
+leave it unconstrained for the diagnostic requested in the review.  Optional
 per-view biases are represented in the identifiable mean-zero subspace.
 """
 from __future__ import annotations
@@ -23,20 +23,13 @@ DEFAULT_EPS = PROB_EPS
 
 
 def loss_and_grad(theta, X, p_true, l2=1e-3, eps=DEFAULT_EPS):
-    """CE objective/gradient for theta only.
-
-    Generic in the number of signals: theta and X's last axis just need to
-    agree (e.g. 3 for C/A/S, 4 to add a fourth signal like per-image
-    ambiguity -- see scripts/experiment_ambiguity.py).
-    """
+    """CE objective/gradient for theta only (kept for backward compatibility)."""
     theta = np.asarray(theta, dtype=np.float64)
     X = np.asarray(X, dtype=np.float64)
     p_true = np.asarray(p_true, dtype=np.float64)
 
-    if X.ndim != 3:
-        raise ValueError(f"X must have shape (N, V, D), got {X.shape}")
-    if theta.shape != (X.shape[-1],):
-        raise ValueError(f"theta must have shape {(X.shape[-1],)}, got {theta.shape}")
+    if X.ndim != 3 or X.shape[-1] != 3:
+        raise ValueError(f"X must have shape (N, V, 3), got {X.shape}")
     if p_true.shape != X.shape[:2]:
         raise ValueError(f"p_true must have shape {X.shape[:2]}, got {p_true.shape}")
 
@@ -83,26 +76,22 @@ def loss_and_grad_with_bias(
     l2_bias=1e-3,
     eps=DEFAULT_EPS,
 ):
-    """CE objective/gradient for theta plus an identifiable mean-zero view bias.
-
-    Generic in the number of signals (X's last axis); see ``loss_and_grad``.
-    """
+    """CE objective/gradient for theta plus an identifiable mean-zero view bias."""
     X = np.asarray(X, dtype=np.float64)
     p_true = np.asarray(p_true, dtype=np.float64)
-    if X.ndim != 3:
-        raise ValueError(f"X must have shape (N, V, D), got {X.shape}")
+    if X.ndim != 3 or X.shape[-1] != 3:
+        raise ValueError(f"X must have shape (N, V, 3), got {X.shape}")
     if p_true.shape != X.shape[:2]:
         raise ValueError(f"p_true must have shape {X.shape[:2]}, got {p_true.shape}")
 
     n_views = X.shape[1]
-    n_signals = X.shape[-1]
     params = np.asarray(params, dtype=np.float64)
-    expected = n_signals + max(0, n_views - 1)
+    expected = 3 + max(0, n_views - 1)
     if params.shape != (expected,):
         raise ValueError(f"params must have shape {(expected,)}, got {params.shape}")
 
-    theta = params[:n_signals]
-    bias = mean_zero_bias_from_free(params[n_signals:], n_views)
+    theta = params[:3]
+    bias = mean_zero_bias_from_free(params[3:], n_views)
 
     log_py = np.log(np.clip(p_true, eps, 1.0))
     r = np.einsum("nvd,d->nv", X, theta) + bias[None, :]
@@ -128,28 +117,6 @@ def loss_and_grad_with_bias(
     return loss, grad.astype(np.float64)
 
 
-def _free_signal_mask(n_signals, theta_fixed_zero=False, free_signals=None):
-    """Bool per signal: True = coefficient is fitted, False = held at 0."""
-    if free_signals is None:
-        free = np.ones(n_signals, dtype=bool)
-    else:
-        free = np.asarray(free_signals, dtype=bool).copy()
-        if free.shape != (n_signals,):
-            raise ValueError(f"free_signals must have shape {(n_signals,)}, got {free.shape}")
-    if theta_fixed_zero:
-        free[:] = False
-    return free
-
-
-def _theta_bounds(free, nonnegative, n_params):
-    """L-BFGS-B bounds: zero-width for held signals, [0, inf) if non-negative."""
-    if free.all() and not nonnegative:
-        return None
-    theta = [(0.0, 0.0) if not f else ((0.0, None) if nonnegative else (None, None))
-             for f in free]
-    return theta + [(None, None)] * (n_params - len(free))
-
-
 def fit_coefficients(
     X,
     p_true,
@@ -163,19 +130,8 @@ def fit_coefficients(
     maxiter=500,
     nonnegative=True,
     view_bias=False,
-    theta_fixed_zero=False,
-    free_signals=None,
 ):
     """Fit theta and optional mean-zero view bias with L-BFGS-B.
-
-    ``theta_fixed_zero`` locks alpha/beta/gamma at exactly 0 (via a zero-width
-    bound) and requires ``view_bias=True``, giving the "bias-only" ablation:
-    is a fixed per-view prior alone -- with no per-image C/A/S contribution at
-    all -- already most of the win a fitted config gets?
-
-    ``free_signals`` (one bool per signal, default all True) locks the
-    coefficients of the False signals at exactly 0 the same way, for
-    signal-subset ablations; all False is the same fit as ``theta_fixed_zero``.
 
     Returns:
         theta, bias, best_loss, scipy_result
@@ -185,10 +141,6 @@ def fit_coefficients(
     X = np.asarray(X, dtype=np.float64)
     p_true = np.asarray(p_true, dtype=np.float64)
     n_views = X.shape[1]
-    n_signals = X.shape[-1]
-    free = _free_signal_mask(n_signals, theta_fixed_zero, free_signals)
-    if not free.any() and not view_bias:
-        raise ValueError("holding every signal coefficient at 0 requires view_bias=True")
 
     def make_param(theta, bias=None):
         theta = np.asarray(theta, dtype=float)
@@ -205,29 +157,26 @@ def fit_coefficients(
                 base_starts.append(make_param(s["theta"], s.get("bias")))
             else:
                 arr = np.asarray(s, dtype=float)
-                if arr.shape == (n_signals,):
+                if arr.shape == (3,):
                     base_starts.append(make_param(arr))
                 else:
                     base_starts.append(arr.copy())
 
-    base_starts.extend([make_param(np.zeros(n_signals)), make_param(np.ones(n_signals))])
+    base_starts.extend([make_param(np.zeros(3)), make_param(np.ones(3))])
 
     rng = np.random.default_rng(seed)
     for _ in range(random_restarts):
-        theta0 = np.zeros(n_signals) if not free.any() else (
-            rng.uniform(0.0, 2.0, size=n_signals) if nonnegative
-            else rng.normal(0.0, 1.0, size=n_signals)
-        )
+        theta0 = rng.uniform(0.0, 2.0, size=3) if nonnegative else rng.normal(0.0, 1.0, size=3)
         bias0 = rng.normal(0.0, 0.1, size=n_views) if view_bias else None
         base_starts.append(make_param(theta0, bias0))
 
     unique = []
     seen = set()
     for p in base_starts:
-        p = np.array(p, dtype=float)
-        p[:n_signals][~free] = 0.0
+        p = np.asarray(p, dtype=float)
         if nonnegative:
-            p[:n_signals] = np.maximum(p[:n_signals], 0.0)
+            p = p.copy()
+            p[:3] = np.maximum(p[:3], 0.0)
         key = tuple(np.round(p, 12))
         if key not in seen:
             seen.add(key)
@@ -238,13 +187,15 @@ def fit_coefficients(
             return loss_and_grad_with_bias(
                 params, X, p_true, l2_theta=l2, l2_bias=bias_l2, eps=eps
             )
-        n_params = n_signals + n_views - 1
+        n_params = 3 + n_views - 1
     else:
         def fun(params):
             return loss_and_grad(params, X, p_true, l2=l2, eps=eps)
-        n_params = n_signals
+        n_params = 3
 
-    bounds = _theta_bounds(free, nonnegative, n_params)
+    bounds = None
+    if nonnegative:
+        bounds = [(0.0, None)] * 3 + [(None, None)] * (n_params - 3)
 
     best = None
     for x0 in unique:
@@ -262,9 +213,9 @@ def fit_coefficients(
     if best is None:
         raise RuntimeError("no CE optimization starts were generated")
 
-    theta = np.asarray(best.x[:n_signals], dtype=float)
+    theta = np.asarray(best.x[:3], dtype=float)
     if view_bias:
-        bias = mean_zero_bias_from_free(best.x[n_signals:], n_views).astype(float)
+        bias = mean_zero_bias_from_free(best.x[3:], n_views).astype(float)
     else:
         bias = np.zeros(n_views, dtype=float)
     return theta, bias, float(best.fun), best
@@ -307,8 +258,8 @@ def loss_and_grad_torch(
     """
     X_t = _as_torch_float(X, device=torch.device(device), dtype=dtype)
     p_t = _as_torch_float(p_true, device=X_t.device, dtype=dtype)
-    if X_t.ndim != 3:
-        raise ValueError(f"X must have shape (N, V, D), got {tuple(X_t.shape)}")
+    if X_t.ndim != 3 or X_t.shape[-1] != 3:
+        raise ValueError(f"X must have shape (N, V, 3), got {tuple(X_t.shape)}")
     if tuple(p_t.shape) != tuple(X_t.shape[:2]):
         raise ValueError(f"p_true must have shape {tuple(X_t.shape[:2])}, got {tuple(p_t.shape)}")
 
@@ -335,15 +286,14 @@ def _loss_and_grad_torch_preloaded(
     """Objective callback for already-resident torch tensors."""
     params = np.asarray(params, dtype=np.float64)
     n_views = X_t.shape[1]
-    n_signals = X_t.shape[-1]
-    expected = n_signals + (n_views - 1 if view_bias else 0)
+    expected = 3 + (n_views - 1 if view_bias else 0)
     if params.shape != (expected,):
         raise ValueError(f"params must have shape {(expected,)}, got {params.shape}")
 
     with torch.inference_mode():
-        theta = torch.as_tensor(params[:n_signals], device=X_t.device, dtype=X_t.dtype)
+        theta = torch.as_tensor(params[:3], device=X_t.device, dtype=X_t.dtype)
         if view_bias:
-            free = torch.as_tensor(params[n_signals:], device=X_t.device, dtype=X_t.dtype)
+            free = torch.as_tensor(params[3:], device=X_t.device, dtype=X_t.dtype)
             bias = torch.cat([free, -free.sum().reshape(1)])
         else:
             bias = torch.zeros(n_views, device=X_t.device, dtype=X_t.dtype)
@@ -389,18 +339,15 @@ def fit_coefficients_torch(
     maxiter=500,
     nonnegative=True,
     view_bias=False,
-    theta_fixed_zero=False,
-    free_signals=None,
     device="cuda",
     dtype="float32",
 ):
     """L-BFGS-B fit with the expensive CE objective evaluated by torch.
 
     The optimizer, bounds, starts and mean-zero bias parameterization match
-    :func:`fit_coefficients`, including the ``theta_fixed_zero`` bias-only
-    ablation and the ``free_signals`` subsets. Only the objective/gradient backend changes. ``float32`` is the
-    intended CUDA mode; ``float64`` is available as a parity diagnostic but is
-    much slower on consumer GPUs.
+    :func:`fit_coefficients`.  Only the objective/gradient backend changes.
+    ``float32`` is the intended CUDA mode; ``float64`` is available as a parity
+    diagnostic but is much slower on consumer GPUs.
     """
     dev = torch.device(device)
     if dev.type == "cuda" and not torch.cuda.is_available():
@@ -409,17 +356,13 @@ def fit_coefficients_torch(
 
     X_t = _as_torch_float(X, device=dev, dtype=torch_dtype)
     p_t = _as_torch_float(p_true, device=dev, dtype=torch_dtype)
-    if X_t.ndim != 3:
-        raise ValueError(f"X must have shape (N, V, D), got {tuple(X_t.shape)}")
+    if X_t.ndim != 3 or X_t.shape[-1] != 3:
+        raise ValueError(f"X must have shape (N, V, 3), got {tuple(X_t.shape)}")
     if tuple(p_t.shape) != tuple(X_t.shape[:2]):
         raise ValueError(f"p_true must have shape {tuple(X_t.shape[:2])}, got {tuple(p_t.shape)}")
 
     n_views = X_t.shape[1]
-    n_signals = X_t.shape[-1]
     log_py_t = torch.log(torch.clamp(p_t, min=float(eps), max=1.0))
-    free = _free_signal_mask(n_signals, theta_fixed_zero, free_signals)
-    if not free.any() and not view_bias:
-        raise ValueError("holding every signal coefficient at 0 requires view_bias=True")
 
     def make_param(theta, bias=None):
         theta = np.asarray(theta, dtype=float)
@@ -436,17 +379,18 @@ def fit_coefficients_torch(
                 base_starts.append(make_param(s["theta"], s.get("bias")))
             else:
                 arr = np.asarray(s, dtype=float)
-                if arr.shape == (n_signals,):
+                if arr.shape == (3,):
                     base_starts.append(make_param(arr))
                 else:
                     base_starts.append(arr.copy())
-    base_starts.extend([make_param(np.zeros(n_signals)), make_param(np.ones(n_signals))])
+    base_starts.extend([make_param(np.zeros(3)), make_param(np.ones(3))])
 
     rng = np.random.default_rng(seed)
     for _ in range(random_restarts):
-        theta0 = np.zeros(n_signals) if not free.any() else (
-            rng.uniform(0.0, 2.0, size=n_signals) if nonnegative
-            else rng.normal(0.0, 1.0, size=n_signals)
+        theta0 = (
+            rng.uniform(0.0, 2.0, size=3)
+            if nonnegative
+            else rng.normal(0.0, 1.0, size=3)
         )
         bias0 = rng.normal(0.0, 0.1, size=n_views) if view_bias else None
         base_starts.append(make_param(theta0, bias0))
@@ -454,17 +398,19 @@ def fit_coefficients_torch(
     unique = []
     seen = set()
     for p in base_starts:
-        p = np.array(p, dtype=float)
-        p[:n_signals][~free] = 0.0
+        p = np.asarray(p, dtype=float)
         if nonnegative:
-            p[:n_signals] = np.maximum(p[:n_signals], 0.0)
+            p = p.copy()
+            p[:3] = np.maximum(p[:3], 0.0)
         key = tuple(np.round(p, 12))
         if key not in seen:
             seen.add(key)
             unique.append(p)
 
-    n_params = n_signals + (n_views - 1 if view_bias else 0)
-    bounds = _theta_bounds(free, nonnegative, n_params)
+    n_params = 3 + (n_views - 1 if view_bias else 0)
+    bounds = None
+    if nonnegative:
+        bounds = [(0.0, None)] * 3 + [(None, None)] * (n_params - 3)
 
     def fun(params):
         return _loss_and_grad_torch_preloaded(
@@ -497,9 +443,9 @@ def fit_coefficients_torch(
     if best is None:
         raise RuntimeError("no CE optimization starts were generated")
 
-    theta = np.asarray(best.x[:n_signals], dtype=float)
+    theta = np.asarray(best.x[:3], dtype=float)
     if view_bias:
-        bias = mean_zero_bias_from_free(best.x[n_signals:], n_views).astype(float)
+        bias = mean_zero_bias_from_free(best.x[3:], n_views).astype(float)
     else:
         bias = np.zeros(n_views, dtype=float)
     return theta, bias, float(best.fun), best

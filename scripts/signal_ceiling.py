@@ -108,7 +108,7 @@ def fused_acc_from_scores(pre, corruptions, severities, score_fn):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--models", nargs="+", default=["resnet18", "deit"], choices=["resnet18", "deit", "convnext"])
+    ap.add_argument("--models", nargs="+", default=["resnet18", "deit"], choices=["resnet18", "deit"])
     ap.add_argument("--cache-dir", default="cache_fixed")
     ap.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
     ap.add_argument("--frac-tune", type=float, default=0.5)

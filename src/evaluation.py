@@ -1,13 +1,17 @@
 """GPU evaluation helpers for cached multi-view probability profiles.
 
-Same definitions as the NumPy ``metrics`` path (cross-checked in
-test/test_evaluation.py), with the heavy work in torch, and able to score
-*many* fusion configurations from one pairwise-JSD pass per condition.
+The project historically evaluated one tuning JSON at a time through the
+NumPy ``metrics.precompute`` path.  That made evaluation unexpectedly slower
+than the now-GPU-accelerated tuning stage, because every method recomputed the
+same pairwise JSD matrix for every condition.
+
+This module keeps the evaluation definitions the same while doing the heavy
+work in torch and, crucially, can score *many* fusion configurations from one
+pairwise-JSD pass for a condition.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -67,10 +71,6 @@ def _stability_from_d_torch(d: torch.Tensor, *, m: int, ladder_len=None) -> torc
         idx = [j for j in range(lo, hi + 1) if j != k]
         if idx:
             out[..., k] = -d[..., k, idx].mean(dim=-1)
-    if 0 < L < nviews:
-        # non-ladder views are neutral: mean ladder S (z-score 0), see
-        # analysis.stability_from_d
-        out[..., L:] = out[..., :L].mean(dim=-1, keepdim=True)
     return out
 
 
@@ -264,80 +264,6 @@ def fused_correct_many_torch(
     return out, orig
 
 
-def fit_vanilla_temperature(
-    cache_dir,
-    model_name,
-    corruptions,
-    severities,
-    *,
-    frac_tune=0.5,
-    split_seed=0,
-    device="auto",
-    temperatures=None,
-    eps=PROB_EPS,
-):
-    """Fit one scalar output temperature for the raw, unfused view-0 predictor.
-
-    Standard post-hoc temperature scaling (Guo et al. 2017): minimizes NLL of
-    the original softmax on the tune half only, pooled across every cached
-    corruption/severity for this model -- the same half, same NLL objective,
-    and same grid search that ``tune_output_temperature`` uses to calibrate
-    the *fused* predictor. This gives a fair "orig, also calibrated" baseline
-    instead of comparing a calibrated fused predictor to an uncalibrated raw
-    one.
-    """
-    from src import cache as cache_mod
-    from src.splits import tune_test_masks
-
-    dev = device_from_arg(device) if not isinstance(device, torch.device) else device
-    if temperatures is None:
-        temperatures = np.geomspace(0.25, 4.0, 49).astype(np.float32)
-    temperatures = np.asarray(temperatures, dtype=np.float32)
-    temperatures_t = torch.as_tensor(temperatures, device=dev, dtype=torch.float32)
-    nll_sums = torch.zeros(len(temperatures), device=dev, dtype=torch.float64)
-    n_total = 0
-
-    prev_root = cache_mod.CACHE_ROOT
-    cache_mod.CACHE_ROOT = Path(cache_dir)
-    try:
-        for corruption in corruptions:
-            for sev in severities:
-                if not cache_mod.has_condition(model_name, corruption, sev):
-                    continue
-                d = cache_mod.load_condition(model_name, corruption, sev)
-                tune_mask, _ = tune_test_masks(d["paths"], frac_tune, split_seed)
-                probs = np.ascontiguousarray(d["probs"][tune_mask][:, 0])
-                labels = np.asarray(d["labels"][tune_mask], dtype=np.int64)
-                orig = torch.as_tensor(probs, device=dev, dtype=torch.float32)
-                labels_t = torch.as_tensor(labels, device=dev)
-                with torch.inference_mode():
-                    logp = torch.where(
-                        orig > 0, torch.log(orig), torch.full_like(orig, -torch.inf)
-                    )
-                    # Floor only the true-class term (matches
-                    # tune_output_temperature / metrics.nll): a float16-cached
-                    # probability can round the true class to exactly 0, which
-                    # would make every temperature's NLL +inf and turn the grid
-                    # search into "pick the first entry" instead of a real fit.
-                    true_prob = orig.gather(1, labels_t[:, None]).squeeze(1)
-                    true_logp = torch.log(torch.clamp(true_prob, min=float(eps)))
-                    for i in range(len(temperatures)):
-                        T = temperatures_t[i]
-                        z = logp / T
-                        log_den = torch.logsumexp(z, dim=1)
-                        true_scaled = true_logp / T
-                        nll_sums[i] += (log_den - true_scaled).sum()
-                n_total += len(labels)
-    finally:
-        cache_mod.CACHE_ROOT = prev_root
-
-    if n_total == 0:
-        raise RuntimeError(f"no tune-half data found for {model_name} in {cache_dir}")
-    means = (nll_sums / n_total).cpu().numpy()
-    idx = int(np.argmin(means))
-    return float(temperatures[idx]), float(means[idx])
-
-
 def score_many_torch(
     probs_views,
     labels,
@@ -348,7 +274,6 @@ def score_many_torch(
     signal_chunk=256,
     signal_pair_batch=32,
     return_correctness=False,
-    orig_temperature=1.0,
 ):
     """Score many fusion configs while sharing one condition's JSD/signals.
 
@@ -395,13 +320,6 @@ def score_many_torch(
         oracle_ok = probs_t.argmax(2).eq(labels_t[:, None]).any(1)
 
         orig_conf = orig.max(1).values
-        # Calibrated-vanilla baseline: same temperature-scaling machinery as the
-        # fused predictor's cfg.output_temperature, fit separately on view 0
-        # alone (see fit_vanilla_temperature). Defaults to 1.0 (a no-op), so
-        # existing callers that never pass orig_temperature are unaffected.
-        _, orig_ece_t, orig_nll_t = _calibrated_fused_stats(
-            orig, labels_t, orig_temperature
-        )
         shared = {
             "n": n,
             "orig_acc": float(orig_pred.eq(labels_t).float().mean().item()),
@@ -412,9 +330,6 @@ def score_many_torch(
             "oracle_acc": float(oracle_ok.float().mean().item()),
             "orig_ece": _ece_from_conf_pred(orig_conf, orig_pred, labels_t),
             "orig_nll": _nll_from_probs(orig, labels_t),
-            "orig_temperature": float(orig_temperature),
-            "orig_ece_calibrated": orig_ece_t,
-            "orig_nll_calibrated": orig_nll_t,
         }
 
         rows = {}

@@ -47,7 +47,8 @@ def main():
 
     pil_image = Image.open(args.image).convert("RGB")
 
-    # Resize/crop to 224x224, the geometry the classifiers receive.
+    # For now we force 224x224 so the test resembles
+    # what the classifiers will eventually receive.
     pil_image = TF.resize(pil_image, 256)
     pil_image = TF.center_crop(pil_image, [224, 224])
 

@@ -18,7 +18,6 @@ Read back with tune_fusion.py / evaluate.py --cache-dir cache_combined
     python scripts/build_combined_cache.py
 """
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -63,16 +62,53 @@ def merge_condition(model_name, corruption, severity, spectral_dir, spatial_dir,
         return None
     spat = cache.load_spatial_condition(model_name, corruption, severity)
 
-    rec = cache.merge_profiles(spec, spat, spatial_views=spatial_views, ladder_len=LADDER_LEN)
-    return (rec["probs"], rec["labels"], rec["paths"], rec["cutoffs"], rec["ladder"],
-            list(rec["view_names"]))
+    spec_paths, spat_paths = list(spec["paths"]), list(spat["paths"])
+    if spec_paths != spat_paths:
+        # re-order the spatial condition to match the spectral one's image order
+        pos = {p: i for i, p in enumerate(spat_paths)}
+        if set(spec_paths) != set(spat_paths):
+            raise ValueError(
+                f"{model_name}/{corruption}/{severity}: image sets differ between "
+                f"{spectral_dir} and {spatial_dir}"
+            )
+        idx = [pos[p] for p in spec_paths]
+        spat_probs = spat["probs"][idx]
+    else:
+        spat_probs = spat["probs"]
+
+    combined = np.concatenate(
+        [spec["probs"][:, :LADDER_LEN], spat_probs[:, list(spatial_views)]], axis=1
+    ).astype(np.float16)
+    assert combined.shape[1] == LADDER_LEN + len(list(spatial_views))
+    # Preserve spectral metadata so downstream plots/evaluators can label the
+    # ladder correctly for either fixed or geometric caches.
+    cutoffs = spec.get("cutoffs")
+    ladder = spec.get("ladder")
+    view_names = ["original"]
+    if cutoffs is not None:
+        # Fixed/geometric cutoffs are identical for every image; adaptive energy
+        # caches may vary per image, so use generic spectral labels there.
+        first = np.asarray(cutoffs[0] if np.ndim(cutoffs) == 2 else cutoffs)
+        if np.ndim(cutoffs) == 2 and np.allclose(cutoffs, cutoffs[:1]):
+            view_names += [f"lowpass_{x:.6g}" for x in first]
+        else:
+            view_names += [f"spectral_{i}" for i in range(1, LADDER_LEN)]
+    else:
+        view_names += [f"spectral_{i}" for i in range(1, LADDER_LEN)]
+    spatial_names = [
+        "hflip", "top_left", "top_right", "bottom_left", "bottom_right",
+        "top_left_hflip", "bottom_right_hflip",
+    ]
+    selected_names = [spatial_names[i - 1] for i in spatial_views]
+    view_names += selected_names
+    return combined, spec["labels"], spec["paths"], cutoffs, ladder, view_names
 
 
 def main():
     """Merge every requested (model, corruption, severity) condition and save it."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"],
-                    choices=["resnet18", "deit", "convnext"])
+                    choices=["resnet18", "deit"])
     ap.add_argument("--corruptions", nargs="+",
                     default=STANDARD_CORRUPTIONS + ["clean"])
     ap.add_argument("--severities", nargs="+", type=int, default=[1, 2, 3, 4, 5])
@@ -84,23 +120,11 @@ def main():
                          "the spectral ladder; default all 7. e.g. '--spatial-views 1' "
                          "for hflip-only (pair with --out-dir cache_combined_lite)")
     ap.add_argument("--overwrite", action="store_true")
-    ap.add_argument("--virtual", action="store_true",
-                    help="write only a virtual_combined.json pointing at the two "
-                         "source caches; conditions are concatenated on load "
-                         "(no disk copy). See src/cache.py VIRTUAL_SPEC.")
     args = ap.parse_args()
 
     spectral_dir = Path(args.spectral_dir)
     spatial_dir = Path(args.spatial_dir)
     out_dir = Path(args.out_dir)
-
-    if args.virtual:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        spec = {"spectral": str(spectral_dir), "spatial": str(spatial_dir),
-                "spatial_views": list(args.spatial_views), "ladder_len": LADDER_LEN}
-        (out_dir / cache.VIRTUAL_SPEC).write_text(json.dumps(spec, indent=2))
-        print(f"wrote virtual combined cache {out_dir / cache.VIRTUAL_SPEC}: {spec}")
-        return
 
     conditions = []
     for corr in args.corruptions:
