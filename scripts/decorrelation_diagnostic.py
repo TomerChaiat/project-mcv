@@ -40,6 +40,7 @@ EPS = 1e-12
 
 
 def latest_tuning(method, model_name, cache_dir, results_dir="results"):
+    """Path of the newest LOFO tuning json for (method, model, cache), or exit if none."""
     tag = Path(cache_dir).name + "_lofo"
     rx = re.compile(rf"tuning_{method}_{model_name}_{tag}_\d{{8}}_\d{{6}}\.json$")
     files = sorted(f for f in glob.glob(f"{results_dir}/tuning_{method}_{model_name}_{tag}_*.json")
@@ -62,6 +63,9 @@ def jsd_to_mean(probs_t, mean_t):
 
 
 def main():
+    """Correlate each view's fitted CE bias with its accuracy, ambiguity and
+    leave-one-out contribution on the tune half; print and save a json report.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit", "convnext"])
     ap.add_argument("--cache-dir", default="cache_combined")
@@ -128,10 +132,12 @@ def main():
             print(f"{k:>4} {bias[k]:>8.3f} {100*acc_k[k]:>7.2f}% {amb_k[k]:>8.4f} {100*contribution_k[k]:>11.3f}pt")
 
         def pearson(x, y):
+            """Pearson correlation of x and y, as a float."""
             x = np.asarray(x); y = np.asarray(y)
             return float(np.corrcoef(x, y)[0, 1])
 
         def spearman(x, y):
+            """Spearman rank correlation of x and y, as a float."""
             x = np.asarray(x); y = np.asarray(y)
             rx = np.argsort(np.argsort(x)); ry = np.argsort(np.argsort(y))
             return pearson(rx, ry)

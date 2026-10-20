@@ -84,6 +84,9 @@ def held_out_scores(model, recs, cache_dir, device):
 
 
 def main():
+    """Pick the method with the best LOFO held-out-family tune-half accuracy
+    per model, freeze a copy of its tuning json and save a selection summary.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", required=True)
     ap.add_argument("--tag", required=True, help="tuning tag, e.g. cache_combined_lofo")

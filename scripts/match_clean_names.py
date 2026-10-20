@@ -41,6 +41,11 @@ def features(paths):
 
 
 def match(clean_paths, corr_paths):
+    """Match clean images to ImageNet-C images by feature correlation (Hungarian assignment).
+
+    Returns:
+        (index into corr_paths per clean image, matched correlation, best-minus-second margin).
+    """
     a, b = features(clean_paths), features(corr_paths)
     corr = a @ b.T / a.shape[1]                      # Pearson correlation matrix
     rows, cols = linear_sum_assignment(-corr)
@@ -49,6 +54,9 @@ def match(clean_paths, corr_paths):
 
 
 def main():
+    """Build and check the clean -> ImageNet-C filename map against two
+    reference corruptions; save it as json if they agree and it is one-to-one.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--clean-root", default="data/imagenet/val")
     ap.add_argument("--c-root", default="data/imagenet-c")

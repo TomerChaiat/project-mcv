@@ -54,6 +54,9 @@ def final_configs(results, model, tag):
 
 
 def main():
+    """Score the frozen spectral/combined configs on the extra corruptions
+    (test half), bootstrap the deltas, print them and save a json report.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit", "convnext"])
     ap.add_argument("--corruptions", nargs="+", default=list(EXTRA_FAMILY))

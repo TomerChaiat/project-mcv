@@ -5,6 +5,11 @@ from src.metrics import FusionConfig, precompute, score
 
 
 def _probs(seed=0, n=37, v=8, c=19):
+    """Random (n, v, c) float16 probabilities and integer labels.
+
+    Returns:
+        (probs, labels).
+    """
     rng = np.random.default_rng(seed)
     x = rng.gamma(shape=1.5, scale=1.0, size=(n, v, c)).astype(np.float32)
     x /= x.sum(axis=-1, keepdims=True)
@@ -13,6 +18,7 @@ def _probs(seed=0, n=37, v=8, c=19):
 
 
 def test_gpu_eval_matches_numpy_multiple_configs_cpu():
+    """score_many_torch matches the numpy score() for several configs on CPU."""
     probs, labels = _probs()
     cfgs = {
         "a": FusionConfig(1.0, 0.5, 0.25, 0.5, True, 2, "all"),
@@ -42,6 +48,7 @@ def test_gpu_eval_matches_numpy_multiple_configs_cpu():
 
 
 def test_correctness_matches_score():
+    """Correctness from score_many_torch matches fused_correct_many_torch and the fused accuracy."""
     probs, labels = _probs(seed=3)
     cfgs = {
         "a": FusionConfig(1.0, 1.0, 0.5, 0.5, True, 1, "origin"),

@@ -52,6 +52,10 @@ def merge_condition(model_name, corruption, severity, spectral_dir, spatial_dir,
             duplicate original) to append after the spectral ladder. Default
             all 7 (the full combined profile); pass e.g. [1] for hflip-only
             (a cheaper variant, see --out-dir cache_combined_lite).
+
+    Returns:
+        (probs, labels, paths, cutoffs, ladder, view_names) of the merged
+        profile, or None if either cache lacks the condition.
     """
     cache.CACHE_ROOT = spectral_dir
     if not cache.has_condition(model_name, corruption, severity):

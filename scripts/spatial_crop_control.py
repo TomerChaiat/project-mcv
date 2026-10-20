@@ -58,6 +58,9 @@ def summarize(model, root, severities, frac_tune, seed):
 
 
 def main():
+    """Compare the resize-196 and padded spatial-TTA caches per model; print
+    and save a json report.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit", "convnext"])
     ap.add_argument("--resize-cache", default="cache_spatial")

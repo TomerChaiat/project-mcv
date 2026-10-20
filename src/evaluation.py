@@ -57,6 +57,13 @@ def pairwise_jsd_torch(
 
 
 def _stability_from_d_torch(d: torch.Tensor, *, m: int, ladder_len=None) -> torch.Tensor:
+    """Torch version of the stability signal from pairwise distances `d`: minus the
+    mean distance to ladder neighbours within `m` rungs; non-ladder views get the
+    mean ladder value.
+
+    Returns:
+        Tensor of shape d.shape[:-1].
+    """
     nviews = d.shape[-1]
     L = nviews if ladder_len is None else int(ladder_len)
     if not 0 <= L <= nviews:
@@ -106,6 +113,7 @@ def signal_variants_torch(
     return raw, std
 
 def device_from_arg(spec: str) -> torch.device:
+    """Turn a --device string ('auto', 'cpu', 'cuda', ...) into a torch.device; raises if CUDA is requested but unavailable."""
     if spec == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dev = torch.device(spec)
@@ -147,6 +155,7 @@ def _ece_from_conf_pred(
 
 
 def _nll_from_probs(probs: torch.Tensor, labels: torch.Tensor, eps=PROB_EPS) -> float:
+    """Mean negative log-likelihood of the true labels under `probs`, as a float."""
     p_true = probs.gather(1, labels[:, None]).squeeze(1)
     return float((-torch.log(torch.clamp(p_true, min=float(eps), max=1.0))).mean().item())
 
@@ -189,6 +198,11 @@ def _calibrated_fused_stats(
 
 
 def _transfer_rates_torch(orig_pred, new_pred, labels):
+    """Torch version of metrics.transfer_rates.
+
+    Returns:
+        Dict with negative/positive transfer rates and n_broken/n_fixed counts.
+    """
     orig_ok = orig_pred.eq(labels)
     new_ok = new_pred.eq(labels)
     n_orig_ok = int(orig_ok.sum().item())
@@ -208,6 +222,11 @@ def _fuse_from_cfg(
     triplet,
     cfg: FusionConfig,
 ) -> torch.Tensor:
+    """Fuse the views with softmax weights from cfg's signal coefficients (plus view bias).
+
+    Returns:
+        (N, C) fused probabilities.
+    """
     C, A, S = triplet
     scores = float(cfg.alpha) * C + float(cfg.beta) * A + float(cfg.gamma) * S
     if cfg.view_bias:

@@ -82,6 +82,9 @@ def correlations(rows):
 
 
 def main():
+    """Measure how much corruption energy each low-pass view removes, pair it
+    with the view's accuracy gain per model, and save rows + Spearman correlations.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-per-condition", type=int, default=500,
                     help="test-half images per (corruption, severity) for the spectra")

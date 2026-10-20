@@ -4,6 +4,7 @@ from src.metrics import FusionConfig, precompute, score, temperature_scale_probs
 
 
 def _probs(seed=0, n=31, v=8, c=17):
+    """Random (n, v, c) float32 probabilities normalized over classes."""
     rng = np.random.default_rng(seed)
     x = rng.random((n, v, c), dtype=np.float32)
     x /= x.sum(axis=-1, keepdims=True)
@@ -11,6 +12,7 @@ def _probs(seed=0, n=31, v=8, c=17):
 
 
 def test_output_temperature_preserves_argmax():
+    """Output temperature scaling keeps the argmax and still sums to 1."""
     p = _probs(v=1)[:, 0]
     a = p.argmax(-1)
     for t in (0.3, 0.7, 1.0, 2.0, 4.0):
@@ -20,6 +22,7 @@ def test_output_temperature_preserves_argmax():
 
 
 def test_baselines_do_not_depend_on_main_tau_standardization_or_agreement():
+    """The confidence/agreement baselines don't change with the main config's tau, standardization or agreement mode."""
     probs = _probs()
     labels = np.arange(len(probs)) % probs.shape[-1]
 
@@ -37,6 +40,7 @@ def test_baselines_do_not_depend_on_main_tau_standardization_or_agreement():
 
 
 def test_view_bias_length_checked():
+    """A view_bias whose length doesn't match the number of views raises ValueError."""
     probs = _probs(v=4)
     labels = np.arange(len(probs)) % probs.shape[-1]
     pre = precompute(probs, m=1, agreement="all")

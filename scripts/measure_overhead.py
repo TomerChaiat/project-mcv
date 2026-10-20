@@ -51,6 +51,7 @@ def time_profile(model, images, n_reps, warmup=3):
     device = images.device
 
     def one_call():
+        """One forward pass of the spectral views for the timing batch. Returns the view probabilities."""
         views = cache.spectral_views_fixed(images, cache.FIXED_CUTOFFS)
         return cache.view_probs(model, views)
 
@@ -80,6 +81,7 @@ def time_combined(model, images, n_reps, warmup=3, spatial_views=range(1, 8)):
     spatial_views = list(spatial_views)
 
     def one_call():
+        """One forward pass of the combined spectral + spatial views for the timing batch. Returns the view probabilities."""
         spatial = cache.spatial_views(images)          # (B, 8, 3, 224, 224)
         spectral = cache.spectral_views_fixed(spatial[:, 0], cache.FIXED_CUTOFFS)
         views = torch.cat([spectral, spatial[:, spatial_views]], dim=1)

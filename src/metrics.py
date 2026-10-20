@@ -36,6 +36,7 @@ class FusionConfig:
     output_temperature: float = 1.0
 
     def as_dict(self):
+        """The config as a plain json-serializable dict."""
         return dict(
             alpha=self.alpha,
             beta=self.beta,
@@ -50,6 +51,7 @@ class FusionConfig:
 
     @classmethod
     def from_dict(cls, d):
+        """Build a FusionConfig from a dict, ignoring unknown keys."""
         allowed = {
             "alpha", "beta", "gamma", "tau", "standardize", "m", "agreement",
             "view_bias", "output_temperature",
@@ -61,14 +63,17 @@ class FusionConfig:
 
 
 def top1(probs):
+    """Index of the most probable class along the last axis."""
     return probs.argmax(axis=-1)
 
 
 def accuracy(pred, labels):
+    """Fraction of predictions equal to the labels, as a float."""
     return float(np.mean(pred == labels))
 
 
 def ece(probs2d, labels, n_bins=15):
+    """Expected calibration error of (N, C) probabilities with `n_bins` equal-width bins, as a float."""
     conf = probs2d.max(axis=-1)
     pred = probs2d.argmax(axis=-1)
     correct = (pred == labels).astype(np.float64)
@@ -114,6 +119,12 @@ def temperature_scale_probs(probs2d, temperature=1.0, eps=PROB_EPS):
 
 
 def transfer_rates(orig_pred, new_pred, labels):
+    """How fusion changed correctness vs the original prediction.
+
+    Returns:
+        Dict with negative_transfer (broken / originally right), positive_transfer
+        (fixed / originally wrong) and the n_broken / n_fixed counts.
+    """
     orig_ok = orig_pred == labels
     new_ok = new_pred == labels
     n_orig_ok = int(orig_ok.sum())
@@ -162,6 +173,11 @@ def precompute(probs_views, m=1, agreement="all", ladder_len=None):
 
 
 def _view_scores(pre, cfg: FusionConfig):
+    """Per-view reliability scores from the precomputed signals and cfg (plus view bias).
+
+    Returns:
+        (N, V) score array.
+    """
     C, A, S = pre["C"], pre["A"], pre["S"]
     if cfg.standardize:
         C, A, S = analysis.zscore(C), analysis.zscore(A), analysis.zscore(S)
@@ -177,6 +193,7 @@ def _view_scores(pre, cfg: FusionConfig):
 
 
 def fused_probs(pre, cfg: FusionConfig):
+    """Fused (N, C) probabilities for cfg, after output temperature scaling."""
     scores = _view_scores(pre, cfg)
     w = analysis.fusion_weights(scores, tau=cfg.tau)
     fused = analysis.fuse(pre["probs"], w)
@@ -184,6 +201,12 @@ def fused_probs(pre, cfg: FusionConfig):
 
 
 def score(pre, labels, cfg: FusionConfig, full=True):
+    """Score cfg on precomputed signals.
+
+    Returns:
+        Fused accuracy if not `full`, else a dict of accuracies (fused, original,
+        baselines, oracle), ECE, NLL and transfer rates.
+    """
     labels = np.asarray(labels)
     fused = fused_probs(pre, cfg)
     fused_pred = top1(fused)
@@ -222,6 +245,7 @@ def score(pre, labels, cfg: FusionConfig, full=True):
 
 
 def evaluate(probs_views, labels, cfg: FusionConfig):
+    """Precompute the signals for cfg and score it. Returns the full metrics dict."""
     return score(
         precompute(probs_views, m=cfg.m, agreement=cfg.agreement),
         labels,

@@ -114,24 +114,29 @@ def _latest(pattern, regex):
 
 
 def _eval_path(model, profile, method="final", ext="json"):
+    """Path of the newest eval_<model>_<profile tag>_<method> file with extension `ext`."""
     tag = f"{PROFILE_TAG[profile]}_{method}"
     return _latest(f"eval_{model}_{tag}_*.{ext}",
                    rf"^eval_{model}_{re.escape(tag)}_\d{{8}}_\d{{6}}\.{ext}$")
 
 
 def load_eval_json(model, profile, method="final"):
+    """Newest eval json (summary metrics) for (model, profile, method), as a dict."""
     return json.loads(Path(_eval_path(model, profile, method, "json")).read_text())
 
 
 def load_eval_csv(model, profile, method="final"):
+    """Newest eval csv (per-condition rows) for (model, profile, method), as a DataFrame."""
     return pd.read_csv(_eval_path(model, profile, method, "csv"))
 
 
 def load_bootstrap(profile):
+    """The final bootstrap_ci json for `profile`, as a dict keyed by model."""
     return json.loads((R / f"bootstrap_ci_{PROFILE_TAG[profile]}_final.json").read_text())
 
 
 def load_final_tuning(model, profile):
+    """Newest frozen (final) tuning json for (model, profile), as a dict."""
     tag = PROFILE_TAG[profile]
     return json.loads(Path(_latest(f"tuning_{model}_{tag}_final_*.json",
                                    rf"^tuning_{model}_{tag}_final_\d{{8}}_\d{{6}}\.json$")).read_text())
@@ -152,6 +157,7 @@ def load_selection(profile):
 
 
 def load_vs_biasonly(model, profile):
+    """Selected predictor vs the bias-only fit bootstrap record, or None if not run."""
     p = R / f"bootstrap_selected_vs_biasonly_{model}_{PROFILE_TAG[profile]}.json"
     return json.loads(p.read_text()) if p.exists() else None
 
@@ -166,6 +172,7 @@ def load_vs_equal(model, profile):
 # drawing helpers
 # --------------------------------------------------------------------------- #
 def save(fig, name):
+    """Save `fig` as <name>.pdf and a 300 DPI <name>.png in OUT, then close it."""
     fig.savefig(OUT / f"{name}.pdf", bbox_inches="tight")
     fig.savefig(OUT / f"{name}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -173,10 +180,12 @@ def save(fig, name):
 
 
 def zero_line(ax):
+    """Draw a horizontal reference line at y = 0 on `ax`."""
     ax.axhline(0.0, color=ZERO_LINE, linewidth=0.8, zorder=1)
 
 
 def clean_axes(ax, xgrid=False):
+    """Hide the top/right spines and, unless `xgrid`, the vertical grid lines."""
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
     if not xgrid:
@@ -193,6 +202,9 @@ def grouped_bars(ax, x, values_by_model, width=0.8):
 
 
 def family_separators(ax, ymax=None, labels=True):
+    """Draw vertical lines between corruption families and, if `labels` and
+    `ymax` are given, the family names at the top. Returns nothing.
+    """
     pos = 0
     for fam, corrs in FAMILIES.items():
         if pos > 0:
@@ -204,11 +216,17 @@ def family_separators(ax, ymax=None, labels=True):
 
 
 def gains_by(df, key, values):
+    """Mean fused - original accuracy (pts) of `df` for each value of column `key`.
+
+    Returns:
+        List of gains, one per entry of `values`.
+    """
     return [100 * (df[df[key] == v]["fused_acc"] - df[df[key] == v]["orig_acc"]).mean()
             for v in values]
 
 
 def fmt_ci(point, ci):
+    """Format a fractional point estimate and 95% CI as '+p [+lo, +hi]' in pts."""
     return f"{100 * point:+.2f} [{100 * ci[0]:+.2f}, {100 * ci[1]:+.2f}]"
 
 
@@ -216,6 +234,7 @@ def fmt_ci(point, ci):
 # Figure: per-family gain, combined profile
 # --------------------------------------------------------------------------- #
 def fig_family_gain():
+    """Figure: per-family fused - original gain, combined profile, all models."""
     fam_order = list(FAMILIES)
     gains = {}
     for m in MODEL_ORDER:
@@ -239,6 +258,7 @@ def fig_family_gain():
 # Figure: severity trend, combined profile
 # --------------------------------------------------------------------------- #
 def fig_severity_trend():
+    """Figure: mean fused - original gain vs severity, combined profile."""
     sev = [1, 2, 3, 4, 5]
     fig, ax = plt.subplots(figsize=(3.4, 2.6))
     for m in MODEL_ORDER:
@@ -270,6 +290,9 @@ def _tuned_spatial(m):
 
 
 def table_main_results():
+    """LaTeX table of the headline results (combined profile): vanilla,
+    spatial TTA, final mCA and bootstrapped deltas, plus clean accuracy.
+    """
     boot = load_bootstrap("combined")
     tuned = {m: _tuned_spatial(m) for m in MODEL_ORDER}
     has_tuned = all(tuned.values())
@@ -298,6 +321,7 @@ def table_main_results():
 
 
 def _pair(path):
+    """The delta record ({'point', 'ci95', ...}) from a pairwise bootstrap json."""
     r = json.loads(path.read_text())
     d = r.get("delta", r)
     return d if "point" in d else next(v for v in d.values() if isinstance(v, dict) and "point" in v)
@@ -426,6 +450,7 @@ def table_signal_ablation():
 
 
 def _write_table(name, lines):
+    """Write `lines` to OUT/<name>.tex and print the table."""
     text = "\n".join(lines)
     (OUT / f"{name}.tex").write_text(text)
     print(f"  saved {name}.tex")
@@ -436,6 +461,7 @@ def _write_table(name, lines):
 # Figure: per-corruption gain, combined profile
 # --------------------------------------------------------------------------- #
 def fig_per_corruption_gain():
+    """Figure: per-corruption fused - original gain, combined profile."""
     gains = {m: gains_by(load_eval_csv(m, "combined"), "corruption", CORRUPTION_ORDER)
              for m in MODEL_ORDER}
     x = np.arange(len(CORRUPTION_ORDER))
@@ -481,6 +507,9 @@ GAIN_KEYS = [
 
 
 def table_and_fig_baselines_oracle():
+    """LaTeX table of every baseline's mCA (and the oracle) plus a figure of
+    each baseline's bootstrapped gain over the original, combined profile.
+    """
     js = {m: load_eval_json(m, "combined") for m in MODEL_ORDER}
     boot = load_bootstrap("combined")
     for m in MODEL_ORDER:
@@ -533,6 +562,9 @@ def table_and_fig_baselines_oracle():
 # Figure: corruption x severity heatmaps, combined profile
 # --------------------------------------------------------------------------- #
 def fig_heatmaps():
+    """Figure per model: corruption x severity heatmap of the fused - original
+    gain, combined profile, on one shared color scale.
+    """
     mats = {}
     for m in MODEL_ORDER:
         df = load_eval_csv(m, "combined")
@@ -571,6 +603,9 @@ def fig_heatmaps():
 # Figure + table: learned per-view bias, global config, all three models
 # --------------------------------------------------------------------------- #
 def fig_view_bias():
+    """Figure + LaTeX table of the learned per-view bias of the selected global
+    config (models whose method has no bias are skipped).
+    """
     biases, methods, omitted = {}, {}, {}
     for m in MODEL_ORDER:
         t = load_final_tuning(m, "combined")
@@ -620,6 +655,9 @@ def fig_view_bias():
 # Table: calibration, transfer, oracle, overhead (combined profile)
 # --------------------------------------------------------------------------- #
 def _overhead():
+    """Per-model inference cost of the combined profile vs one forward pass,
+    from inference_overhead.json; {} if not measured.
+    """
     p = R / "inference_overhead.json"
     if not p.exists():
         return {}
@@ -627,6 +665,9 @@ def _overhead():
 
 
 def table_diagnostics():
+    """LaTeX table of NLL/ECE (vanilla, calibrated vanilla, final), images
+    fixed/broken and inference overhead, combined profile.
+    """
     ov = _overhead()
     lines = [r"\begin{tabular}{lrrrrrrrrr}", r"\toprule",
              "Model & \\multicolumn{3}{c}{NLL} & \\multicolumn{3}{c}{ECE} & Fixed (\\% all) & "
@@ -665,6 +706,7 @@ def _cfg_cell(glob_v, fold_vs, fmt="{:.2f}"):
 
 
 def _set_cell(glob_v, fold_vs):
+    """All distinct values among the global and fold values, joined by '/'."""
     vals = sorted({str(v) for v in fold_vs} | {str(glob_v)})
     return "/".join(vals)
 
@@ -706,6 +748,9 @@ def table_final_config():
 # Table: per-corruption numbers, combined profile, all 15 corruptions
 # --------------------------------------------------------------------------- #
 def table_per_corruption():
+    """LaTeX table of vanilla/final accuracy and their delta per corruption
+    and model, combined profile.
+    """
     dfs = {m: load_eval_csv(m, "combined") for m in MODEL_ORDER}
     lines = [r"\begin{tabular}{l" + "rrr" * len(MODEL_ORDER) + "}", r"\toprule",
              "Corruption & " + " & ".join(f"\\multicolumn{{3}}{{c}}{{{MODEL_LABEL[m]}}}"
@@ -729,6 +774,7 @@ def table_per_corruption():
 # Figure: the Gaussian low-pass ladder itself (pure math)
 # --------------------------------------------------------------------------- #
 def fig_lowpass_ladder():
+    """Figure: transmission curves of the 7 Gaussian low-pass masks."""
     scales = [0.90, 0.75, 0.60, 0.45, 0.30, 0.20, 0.12]
     r = np.linspace(0, 1.4, 400)
     fig, ax = plt.subplots(figsize=(3.4, 2.8))
@@ -774,6 +820,9 @@ def per_view_accuracy():
 
 
 def fig_per_view_accuracy():
+    """Figure: per-view accuracy change vs the original down the low-pass
+    ladder, one panel per family.
+    """
     res = per_view_accuracy()
     fams = list(FAMILIES)
     fig, axes = plt.subplots(1, 4, figsize=(7.8, 2.5), sharey=False)
@@ -804,6 +853,7 @@ def fig_per_view_accuracy():
 # Figure: remaining oracle headroom by corruption, combined profile
 # --------------------------------------------------------------------------- #
 def fig_oracle_headroom():
+    """Figure: oracle - fused accuracy per corruption, combined profile."""
     head = {}
     for m in MODEL_ORDER:
         df = load_eval_csv(m, "combined")
@@ -827,6 +877,9 @@ def fig_oracle_headroom():
 # Figure: positive vs negative transfer per corruption, combined profile
 # --------------------------------------------------------------------------- #
 def fig_transfer_scatter():
+    """Figure: images fixed vs broken by fusion per corruption (% of all
+    images), combined profile.
+    """
     fig, ax = plt.subplots(figsize=(3.6, 3.6))
     for m in MODEL_ORDER:
         df = load_eval_csv(m, "combined")
@@ -915,6 +968,9 @@ SPECTRAL_STATS = (("band_frac", "corruption energy removed"), ("band_shift", "im
 
 
 def table_spectral_energy():
+    """LaTeX table of Spearman correlations between each spectral measure and
+    the LP view's gain (skipped if spectral_energy.json is missing).
+    """
     p = R / "spectral_energy.json"
     if not p.exists():
         return
@@ -923,6 +979,7 @@ def table_spectral_energy():
     extra = json.loads(px.read_text()) if px.exists() else None
 
     def at(r, m, key, field="spearman"):
+        """The `field` entry at ENERGY_CUTOFF of r['spearman'][m][key] (NaN if absent)."""
         return next(d for d in r["spearman"][m][key] if d["cutoff"] == ENERGY_CUTOFF).get(field, float("nan"))
 
     cols = ["15 corruptions", "within family"] + (["4 unseen"] if extra else [])
@@ -952,6 +1009,7 @@ def table_spectral_energy():
 # drifts from the original as more high frequencies are removed
 # --------------------------------------------------------------------------- #
 def fig_profile_drift():
+    """Figure: mean JSD of each low-pass view to the original, per family."""
     p = R / "profile_shape.json"
     if not p.exists():
         print("  results/profile_shape.json missing -- run scripts/profile_shape.py")
@@ -985,6 +1043,9 @@ EXTRA_DELTAS = [("spectral - orig", "Spectral $-$ orig."), ("combined - orig", "
 
 
 def table_extra():
+    """LaTeX table of the bootstrapped deltas on the 4 extra (unseen)
+    corruptions; skipped if that phase was not run.
+    """
     p = R / "extra_corruptions.json"
     if not p.exists():
         print("  no extra_corruptions.json (optional phase 'extra') -- skipped")
@@ -1018,6 +1079,9 @@ GROUP_ROWS = [("noise", "Noise"), ("blur", "Blur"), ("weather", "Weather"), ("di
 
 
 def _family_table(path, families, labels, name, caption):
+    """Write a LaTeX table of test-half gains per image group x view family
+    from `path`; skipped if the file is missing. Returns nothing.
+    """
     if not path.exists():
         print(f"  no {path.name} (optional phase 'views') -- skipped")
         return
@@ -1038,6 +1102,7 @@ def _family_table(path, families, labels, name, caption):
 
 
 def table_view_families():
+    """LaTeX table comparing low-pass, band-pass and notch single views."""
     _family_table(R / "view_family_comparison.json", ["lowpass", "bandpass", "notch"],
                   {"lowpass": "Low-pass", "bandpass": "Band-pass", "notch": "Notch"},
                   "table_view_families",
@@ -1046,6 +1111,7 @@ def table_view_families():
 
 
 def table_ladders():
+    """LaTeX table comparing the fixed and energy-adaptive low-pass ladders."""
     _family_table(R / "ladder_comparison.json", ["lowpass", "energy"],
                   {"lowpass": "Fixed cutoffs", "energy": "Energy-adaptive"},
                   "table_ladders",
@@ -1054,6 +1120,9 @@ def table_ladders():
 
 
 def table_signals():
+    """LaTeX tables of the 4th-signal (ambiguity) experiment and of the
+    correlation of learned per-view weights with view accuracy/contribution.
+    """
     amb = R / "ambiguity_experiment.json"
     if amb.exists():
         rec = json.loads(amb.read_text())

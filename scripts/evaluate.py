@@ -87,6 +87,9 @@ def config_picker(args, model_name, tag=None):
     glob_cfg = FusionConfig.from_dict(tune["global"]["config"])
 
     def pick(corruption):
+        """FusionConfig for `corruption`: its family's held-out config, or the
+        global config if the family wasn't held out.
+        """
         fam = CORRUPTION_FAMILY.get(corruption)
         return held.get(fam, glob_cfg)
 

@@ -45,6 +45,7 @@ CROP = 196
 
 # ----------------------------------------------------------------- images ---
 def load_input():
+    """Noisy crop of the skimage astronaut image, resized to N x N, as floats in [0, 1]."""
     img = data.astronaut()[30:330, 90:390]                 # face + suit
     img = np.asarray(Image.fromarray(img).resize((N, N), Image.BICUBIC))
     img = img.astype(np.float32) / 255.0
@@ -53,6 +54,7 @@ def load_input():
 
 
 def lowpass(img, q):
+    """Gaussian low-pass of `img` in the Fourier domain with width `q`. Returns the filtered image, clipped to [0, 1]."""
     u = np.linspace(-1, 1, N)
     uu, vv = np.meshgrid(u, u, indexing="ij")
     mask = np.exp(-(uu ** 2 + vv ** 2) / (2 * q ** 2))
@@ -64,11 +66,13 @@ def lowpass(img, q):
 
 
 def resize(a):
+    """Bilinearly resize a [0, 1] float image to N x N. Returns the resized image."""
     im = Image.fromarray((a * 255).astype(np.uint8)).resize((N, N), Image.BILINEAR)
     return np.asarray(im).astype(np.float32) / 255.0
 
 
 def spatial_views(img):
+    """The 8 spatial-TTA views of `img` (original, hflip, 4 corner crops, 2 flipped corners). Returns a list of images."""
     c, e = CROP, N - CROP
     tl, tr = resize(img[:c, :c]), resize(img[:c, e:])
     bl, br = resize(img[e:, :c]), resize(img[e:, e:])
@@ -92,17 +96,20 @@ ax.axis("off")
 
 
 def box(x0, y0, w, h, ec=INK, fc="white", lw=0.8, ls="-", r=0.6):
+    """Draw a rounded rectangle on the figure axes. Returns nothing."""
     ax.add_patch(FancyBboxPatch((x0, y0), w, h, boxstyle=f"round,pad=0,rounding_size={r}",
                                 ec=ec, fc=fc, lw=lw, ls=ls))
 
 
 def arrow(x0, y0, x1, y1, c=INK):
+    """Draw an arrow from (x0, y0) to (x1, y1). Returns nothing."""
     ax.annotate("", (x1, y1), (x0, y0),
                 arrowprops=dict(arrowstyle="-|>", lw=0.8, color=c,
                                 shrinkA=0, shrinkB=0, mutation_scale=6))
 
 
 def thumb(img, x0, y0, s, ec=None, ls="-"):
+    """Draw `img` as an s x s thumbnail at (x0, y0), optionally framed. Returns nothing."""
     ax.imshow(img, extent=(x0, x0 + s, y0, y0 + s), interpolation="lanczos", zorder=3)
     if ec:
         ax.add_patch(Rectangle((x0, y0), s, s, fill=False, ec=ec, lw=0.9, ls=ls, zorder=4))
@@ -120,6 +127,11 @@ x_th0 = BX + (BW - (8 * S + 7 * G)) / 2
 
 
 def branch(y0, h, color, title, views, labels, note):
+    """Draw one view-family branch: framed box, title, labelled thumbnails, note.
+
+    Returns:
+        y coordinate of the thumbnail row.
+    """
     box(BX, y0, BW, h, ec=color, lw=0.9)
     ax.text(BX + 0.6, y0 + h - 0.45, title, ha="left", va="top", weight="bold", color=color)
     ty = y0 + 1.3

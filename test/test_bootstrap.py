@@ -4,10 +4,12 @@ from src.bootstrap import cluster_bootstrap, image_keys
 
 
 def _cond(keys, a, b):
+    """Condition record for cluster_bootstrap from keys and the two correctness lists."""
     return {"keys": np.asarray(keys), "a": np.asarray(a, bool), "b": np.asarray(b, bool)}
 
 
 def test_point_is_mean_of_condition_deltas():
+    """The point estimate is the mean over conditions of each condition's a - b delta."""
     keys = [f"img{i}" for i in range(4)]
     conds = [
         _cond(keys, [1, 1, 0, 0], [0, 1, 0, 0]),   # +0.25
@@ -19,6 +21,7 @@ def test_point_is_mean_of_condition_deltas():
 
 
 def test_identical_predictors_give_zero_interval():
+    """Identical predictors give a zero point estimate and a [0, 0] interval."""
     rng = np.random.default_rng(0)
     keys = [f"img{i}" for i in range(50)]
     a = rng.random(50) < 0.5
@@ -41,6 +44,7 @@ def test_correlated_conditions_widen_interval_vs_independent():
 
 
 def test_alignment_by_key_not_position():
+    """Conditions are aligned by image key, not by position."""
     keys = ["x", "y", "z"]
     c1 = _cond(keys, [1, 0, 0], [0, 0, 0])
     c2 = _cond(keys[::-1], [0, 0, 1], [0, 0, 0])  # same image "x" gains in both
@@ -50,6 +54,7 @@ def test_alignment_by_key_not_position():
 
 
 def test_image_keys_use_stem():
+    """image_keys uses the file stem, ignoring the directory."""
     assert list(image_keys(["a/b/ILSVRC_1.JPEG", "c/ILSVRC_1.JPEG"])) == ["ILSVRC_1", "ILSVRC_1"]
 
 
@@ -59,6 +64,7 @@ def test_weighted_condition_auroc_matches_resampled_mann_whitney():
     from scripts.signal_ablation import ConditionAUROC
 
     def mann_whitney(score, y):
+        """Reference AUROC via the Mann-Whitney statistic (ties count 1/2)."""
         pos, neg = score[y == 1], score[y == 0]
         diff = pos[:, None] - neg[None, :]
         return ((diff > 0) + 0.5 * (diff == 0)).mean()

@@ -4,6 +4,7 @@ from src.ce_fusion import fit_nonnegative, loss_and_grad
 
 
 def test_theta_zero_is_equal_weight_nll():
+    """With theta = 0 the CE loss is the NLL of the equal-weight average."""
     rng = np.random.default_rng(0)
     X = rng.normal(size=(7, 5, 3)).astype(np.float32)
     p_true = rng.uniform(0.01, 0.9, size=(7, 5)).astype(np.float32)
@@ -14,6 +15,7 @@ def test_theta_zero_is_equal_weight_nll():
 
 
 def test_gradient_matches_finite_difference():
+    """The analytic theta gradient matches central finite differences."""
     rng = np.random.default_rng(1)
     X = rng.normal(size=(11, 6, 3)).astype(np.float64)
     p_true = rng.uniform(0.02, 0.95, size=(11, 6)).astype(np.float64)
@@ -36,6 +38,7 @@ def test_gradient_matches_finite_difference():
 
 
 def test_optimizer_respects_nonnegative_constraint():
+    """fit_nonnegative returns non-negative coefficients and a finite loss."""
     rng = np.random.default_rng(2)
     X = rng.normal(size=(20, 4, 3)).astype(np.float32)
     p_true = rng.uniform(0.02, 0.95, size=(20, 4)).astype(np.float32)
@@ -49,6 +52,7 @@ def test_optimizer_respects_nonnegative_constraint():
 
 
 def test_bias_gradient_matches_finite_difference():
+    """The analytic (theta, bias) gradient matches central finite differences."""
     from src.ce_fusion import loss_and_grad_with_bias
 
     rng = np.random.default_rng(9)
@@ -77,6 +81,7 @@ def test_bias_gradient_matches_finite_difference():
 
 
 def test_mean_zero_bias_parameterization():
+    """mean_zero_bias_from_free returns a full-length bias that sums to 0."""
     from src.ce_fusion import mean_zero_bias_from_free
 
     b = mean_zero_bias_from_free(np.array([0.3, -0.2, 0.7]), 4)
@@ -85,6 +90,7 @@ def test_mean_zero_bias_parameterization():
 
 
 def test_bias_fit_returns_mean_zero_bias():
+    """A bias fit returns non-negative theta and a mean-zero bias."""
     from src.ce_fusion import fit_coefficients
 
     rng = np.random.default_rng(12)
@@ -102,6 +108,7 @@ def test_bias_fit_returns_mean_zero_bias():
 
 
 def test_torch_objective_matches_numpy_theta_only_cpu():
+    """The torch theta-only objective and gradient match numpy (CPU, float64)."""
     from src.ce_fusion import loss_and_grad_torch
 
     rng = np.random.default_rng(21)
@@ -123,6 +130,7 @@ def test_torch_objective_matches_numpy_theta_only_cpu():
 
 
 def test_torch_objective_matches_numpy_with_bias_cpu():
+    """The torch objective and gradient with view bias match numpy (CPU, float64)."""
     from src.ce_fusion import loss_and_grad_torch, loss_and_grad_with_bias
     import torch
 
@@ -149,6 +157,7 @@ def test_torch_objective_matches_numpy_with_bias_cpu():
 
 
 def test_torch_optimizer_matches_numpy_optimizer_cpu_float64():
+    """The torch optimizer reaches the same fit as the numpy optimizer (CPU, float64)."""
     from src.ce_fusion import fit_coefficients, fit_coefficients_torch
 
     rng = np.random.default_rng(23)
@@ -199,6 +208,7 @@ def test_free_signals_hold_excluded_coefficients_at_zero():
 
 
 def test_no_free_signals_is_the_bias_only_fit():
+    """Freeing no signals equals the bias-only fit, and is rejected without a view bias."""
     from src.ce_fusion import fit_coefficients
 
     rng = np.random.default_rng(32)

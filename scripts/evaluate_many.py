@@ -36,6 +36,11 @@ from scripts.evaluate import _report
 
 
 def make_picker(tuning_path):
+    """Build a corruption -> FusionConfig picker from a tuning json.
+
+    Returns:
+        `pick(corruption)` -> the family's held-out config, or the global one.
+    """
     rec = json.loads(Path(tuning_path).read_text())
     held = {
         fam: FusionConfig.from_dict(entry["config"])
@@ -44,6 +49,7 @@ def make_picker(tuning_path):
     global_cfg = FusionConfig.from_dict(rec["global"]["config"])
 
     def pick(corruption):
+        """FusionConfig for `corruption` (held-out family config, else global)."""
         fam = CORRUPTION_FAMILY.get(corruption)
         return held.get(fam, global_cfg)
 
@@ -51,6 +57,10 @@ def make_picker(tuning_path):
 
 
 def main():
+    """Evaluate several tuned methods on one cache in a single pass over the
+    conditions; write per-method csv/json reports, a manifest and optionally
+    per-image correctness.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--cache-dir", required=True)

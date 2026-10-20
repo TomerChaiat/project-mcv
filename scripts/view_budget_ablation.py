@@ -62,6 +62,7 @@ LADDER_LEN = 8
 
 
 def frozen_tuning(results, model):
+    """Path of the newest frozen combined-cache tuning json for `model`, or exit."""
     files = sorted(glob.glob(str(Path(results) / f"tuning_{model}_cache_combined_lofo_final_*.json")))
     if not files:
         raise SystemExit(f"no frozen combined tuning for {model} in {results}")
@@ -69,6 +70,7 @@ def frozen_tuning(results, model):
 
 
 def pipeline_eval(results, model):
+    """The pipeline's newest combined-cache eval json for `model`, or None."""
     files = sorted(glob.glob(str(Path(results) / f"eval_{model}_cache_combined_lofo_final_*.json")))
     return json.loads(Path(files[-1]).read_text()) if files else None
 
@@ -193,10 +195,16 @@ def evaluate(test, idx_of, ladder_of, cfg_of, device):
 
 
 def mca(correct):
+    """Mean accuracy over conditions of a {condition: correctness} dict."""
     return float(np.mean([v.mean() for v in correct.values()]))
 
 
 def boot(test, a, b, n_boot, seed):
+    """Paired cluster bootstrap of a - b over the test images.
+
+    Returns:
+        {"point", "ci95", "p_le_zero"} with point/CI in percentage points.
+    """
     r = cluster_bootstrap([{"keys": test[cs]["keys"], "a": a[cs], "b": b[cs]} for cs in test],
                           n_boot=n_boot, seed=seed)
     return {"point": 100 * r["point"], "ci95": [100 * x for x in r["ci95"]],
@@ -204,6 +212,12 @@ def boot(test, a, b, n_boot, seed):
 
 
 def run_model(model, args, device):
+    """Run the view-budget ablation for one model: greedy view order per fold,
+    refit per budget, test-half evaluation and bootstrap comparisons.
+
+    Returns:
+        Per-model results dict (orders, per-budget configs/metrics, checks).
+    """
     print(f"\n=== {model} ===")
     frozen_path = frozen_tuning(args.results, model)
     rec = json.loads(Path(frozen_path).read_text())
@@ -297,6 +311,7 @@ def run_model(model, args, device):
 
 
 def write_csv(res, path):
+    """Write the per-model, per-budget results as a csv. Returns nothing."""
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["model", "forward_passes", "method", "mCA", "gain_vs_original",
@@ -314,6 +329,7 @@ def write_csv(res, path):
 
 
 def plot(res, stem):
+    """Plot accuracy vs number of views (uniform and fused) per model; saves <stem>.pdf/.png."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -370,6 +386,7 @@ def plot(res, stem):
 
 
 def main():
+    """Run the view-budget ablation for every model, save json/csv and plot."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=MODELS, choices=MODELS)
     ap.add_argument("--budgets", nargs="+", type=int, default=[2, 4, 8, 15])

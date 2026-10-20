@@ -10,12 +10,14 @@ from scripts.tune_fusion import (
 
 
 def _random_probs(rng, n=17, v=8, c=19):
+    """Random (n, v, c) float32 probabilities normalized over classes."""
     x = rng.random((n, v, c), dtype=np.float32)
     x /= x.sum(axis=-1, keepdims=True)
     return x.astype(np.float32)
 
 
 def test_one_pass_signals_match_project_definitions():
+    """One-pass numpy signals match precompute() for every (m, agreement)."""
     rng = np.random.default_rng(3)
     probs = _random_probs(rng)
     raw, _ = signal_variants_one_pass(
@@ -31,6 +33,7 @@ def test_one_pass_signals_match_project_definitions():
 
 
 def test_gpu_scoring_matches_reference_accuracy_cpu():
+    """score_block_torch grid accuracies exactly match the reference score() on CPU."""
     rng = np.random.default_rng(7)
     probs = _random_probs(rng, n=23, v=8, c=31)
     labels = rng.integers(0, probs.shape[-1], size=len(probs), dtype=np.int64)
@@ -58,6 +61,7 @@ def test_gpu_scoring_matches_reference_accuracy_cpu():
 
 
 def test_torch_pairwise_jsd_matches_numpy_cpu():
+    """Torch pairwise JSD matches numpy, including exact zero probabilities."""
     from src.evaluation import pairwise_jsd_torch
     from src import analysis
 
@@ -73,6 +77,7 @@ def test_torch_pairwise_jsd_matches_numpy_cpu():
 
 
 def test_torch_signal_variants_match_numpy_cpu():
+    """Torch raw and standardized signals match the numpy one-pass signals."""
     from src.evaluation import signal_variants_torch
 
     rng = np.random.default_rng(13)
@@ -97,6 +102,7 @@ def test_torch_signal_variants_match_numpy_cpu():
 
 
 def test_torch_signals_preserve_grid_accuracy_cpu():
+    """Grid accuracies are identical whether the signals come from torch or numpy."""
     from src.evaluation import signal_variants_torch
 
     rng = np.random.default_rng(17)
@@ -125,6 +131,7 @@ def test_torch_signals_preserve_grid_accuracy_cpu():
 
 
 def test_signal_subset_flag_helpers():
+    """free_signal_mask, signal_keys and signal_label handle the --signals subsets."""
     from scripts.tune_fusion_ce import free_signal_mask, signal_keys, signal_label
 
     assert free_signal_mask(None) == (True, True, True)

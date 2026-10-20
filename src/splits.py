@@ -50,6 +50,7 @@ _clean_map = None
 
 
 def _clean_names():
+    """The clean -> ImageNet-C filename map, loaded once ({} if the file is missing)."""
     global _clean_map
     if _clean_map is None:
         _clean_map = json.loads(CLEAN_NAME_MAP.read_text()) if CLEAN_NAME_MAP.exists() else {}

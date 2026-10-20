@@ -69,6 +69,7 @@ def mean_zero_bias_from_free(free_bias, n_views):
 
 
 def _free_bias_from_mean_zero(bias):
+    """Free parameters of a mean-zero view bias: the centered bias without its last entry."""
     bias = np.asarray(bias, dtype=np.float64)
     centered = bias - bias.mean()
     return centered[:-1].copy()
@@ -191,6 +192,7 @@ def fit_coefficients(
         raise ValueError("holding every signal coefficient at 0 requires view_bias=True")
 
     def make_param(theta, bias=None):
+        """Initial optimizer vector: theta, plus the free bias parameters if `view_bias`."""
         theta = np.asarray(theta, dtype=float)
         if not view_bias:
             return theta.copy()
@@ -235,12 +237,14 @@ def fit_coefficients(
 
     if view_bias:
         def fun(params):
+            """CE loss and gradient w.r.t. (theta, free bias) at `params`."""
             return loss_and_grad_with_bias(
                 params, X, p_true, l2_theta=l2, l2_bias=bias_l2, eps=eps
             )
         n_params = n_signals + n_views - 1
     else:
         def fun(params):
+            """CE loss and gradient w.r.t. theta at `params`."""
             return loss_and_grad(params, X, p_true, l2=l2, eps=eps)
         n_params = n_signals
 
@@ -422,6 +426,7 @@ def fit_coefficients_torch(
         raise ValueError("holding every signal coefficient at 0 requires view_bias=True")
 
     def make_param(theta, bias=None):
+        """Initial optimizer vector: theta, plus the free bias parameters if `view_bias`."""
         theta = np.asarray(theta, dtype=float)
         if not view_bias:
             return theta.copy()
@@ -467,6 +472,7 @@ def fit_coefficients_torch(
     bounds = _theta_bounds(free, nonnegative, n_params)
 
     def fun(params):
+        """CE loss and gradient at `params`, computed with torch on the preloaded tensors."""
         return _loss_and_grad_torch_preloaded(
             params,
             X_t,

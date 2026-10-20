@@ -77,6 +77,7 @@ def use_view_set(name):
 
 
 def run_condition(models, corruption, sev, wnid_to_index, out_dir, device, batch_size):
+    """Compute per-view correctness of every model on one condition and save one npz per model. Returns nothing."""
     paths, labels = cache.list_condition_images(corruption, sev, wnid_to_index)
     labels_t = torch.as_tensor(labels, dtype=torch.long, device=device)
     correct = {m: np.zeros((len(paths), len(VIEWS)), dtype=bool) for m in models}
@@ -126,6 +127,9 @@ def summarize(model_names, conditions, out_dir, n_boot, seed):
 
 
 def main():
+    """Compute (or reuse) per-view correctness for each condition, summarize the
+    view-family gains with bootstrap CIs, print them and save a json.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit", "convnext"])
     ap.add_argument("--set", choices=["families", "ladders"], default="families")

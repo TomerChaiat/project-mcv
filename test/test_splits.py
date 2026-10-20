@@ -4,6 +4,7 @@ from src import splits
 
 
 def test_clean_names_map_to_imagenet_c_key(tmp_path, monkeypatch):
+    """Clean image names map to the ImageNet-C key, so both land in the same split half."""
     m = tmp_path / "map.json"
     m.write_text(json.dumps({"n01443537_val_00000": "ILSVRC2012_val_00000236"}))
     monkeypatch.setattr(splits, "CLEAN_NAME_MAP", m)

@@ -120,6 +120,7 @@ def _to_device_float32(x, device: torch.device) -> torch.Tensor:
 
 
 def _sync(device: torch.device) -> None:
+    """Wait for queued CUDA work on `device` (no-op on CPU)."""
     if device.type == "cuda":
         torch.cuda.synchronize(device)
 
@@ -314,6 +315,11 @@ def score_condition(
 
 
 def mean_for_corruptions(matrix, cond_keys, corruptions, severities):
+    """Mean of `matrix` columns for the given corruptions/severities.
+
+    Returns:
+        (num_candidates,) array, or None if no condition matches.
+    """
     cols = [
         i
         for i, (c, s) in enumerate(cond_keys)
@@ -325,6 +331,11 @@ def mean_for_corruptions(matrix, cond_keys, corruptions, severities):
 
 
 def baseline_for_corruptions(base_meta, corruptions, severities):
+    """Mean (orig, equal-average) accuracy over the given conditions.
+
+    Returns:
+        (orig, equal), NaN if no condition matches.
+    """
     vals = [
         base_meta[(c, s)]
         for c in corruptions
@@ -340,6 +351,9 @@ def baseline_for_corruptions(base_meta, corruptions, severities):
 
 
 def main():
+    """Grid-search fusion configs on the tune half per model: score every
+    config once, pick the best per LOFO fold and globally, save the tuning json.
+    """
     from src import cache
 
     ap = argparse.ArgumentParser()
@@ -475,6 +489,12 @@ def main():
         }
 
         def tune_on(name, tune_corr):
+            """Pick the best grid config on `tune_corr`.
+
+            Returns:
+                Dict with the config and its fused/orig/equal accuracies, or None if
+                no tune condition is cached.
+            """
             means = mean_for_corruptions(
                 acc_matrix, cond_keys, tune_corr, args.tune_severities
             )

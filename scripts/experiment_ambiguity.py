@@ -51,6 +51,7 @@ def ce_bias_settings(model_name, cache_dir, results_dir):
 
 
 def zscore_t(x, eps=1e-8):
+    """Z-score `x` along the last dim (sd < eps treated as 1). Returns a tensor of the same shape."""
     mu = x.mean(dim=-1, keepdim=True)
     sd = torch.sqrt(((x - mu) ** 2).mean(dim=-1, keepdim=True))
     denom = torch.where(sd < eps, torch.ones_like(sd), sd)
@@ -70,6 +71,12 @@ def ambiguity_t(probs_t):
 
 
 def load_condition_signals(model_name, corruption, sev, m, agreement, device, half_fn):
+    """Load one condition's half (selected by `half_fn`) and compute its signals.
+
+    Returns:
+        (probs_t, labels_t, X3, X4, p_true, keys): X3 = (C, A, S), X4 adds the
+        ambiguity signal D; p_true is each view's probability of the true label.
+    """
     d = cache.load_condition(model_name, corruption, sev)
     mask = half_fn(d["paths"])
     probs = np.ascontiguousarray(d["probs"][mask])
@@ -87,16 +94,26 @@ def load_condition_signals(model_name, corruption, sev, m, agreement, device, ha
 
 
 def tune_half(paths):
+    """Bool mask of the tune half (frac 0.5, seed 0) for `paths`."""
     m, _ = tune_test_masks(paths, 0.5, 0)
     return m
 
 
 def test_half(paths):
+    """Bool mask of the test half (frac 0.5, seed 0) for `paths`."""
     _, m = tune_test_masks(paths, 0.5, 0)
     return m
 
 
 def fit_and_score(model_name, device, cache_dir, out_dir, results_dir="results", n_boot=2000):
+    """Fit 3-signal and 4-signal (with ambiguity) CE + bias weights per LOFO
+    fold on the tune half, score both on the test half and bootstrap the
+    difference; saves per-image correctness.
+
+    Returns:
+        Results dict: per-fold fits, test mCA of both variants and the
+        4 - 3 signal bootstrap.
+    """
     m, agreement = ce_bias_settings(model_name, cache_dir, results_dir)
     cache.CACHE_ROOT = Path(cache_dir)
 
@@ -148,6 +165,11 @@ def fit_and_score(model_name, device, cache_dir, out_dir, results_dir="results",
 
     # per-condition scoring using each condition's OWN held-out-family config
     def score_lofo(theta_by_fam, bias_by_fam, sig_key):
+        """Test-half accuracy with each condition scored by its family's fold weights.
+
+        Returns:
+            (mean accuracy over conditions, {"<corruption>__<sev>": per-image correctness}).
+        """
         acc_by_cond = []
         correctness = {}
         for corruption in CORRUPTION_FAMILY:
@@ -200,6 +222,7 @@ def fit_and_score(model_name, device, cache_dir, out_dir, results_dir="results",
 
 
 def main():
+    """Run the ambiguity experiment for every model and save ambiguity_experiment.json."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit", "convnext"])
     ap.add_argument("--cache-dir", default="cache_combined")

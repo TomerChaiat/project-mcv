@@ -28,6 +28,12 @@ from src.splits import CORRUPTION_FAMILY, tune_test_masks
 
 
 def config_picker(tuning_path):
+    """Build a corruption -> FusionConfig picker from a tuning json.
+
+    Returns:
+        `pick(corruption)` -> the family's held-out FusionConfig, or the
+        global one if that family wasn't held out.
+    """
     tune = json.loads(Path(tuning_path).read_text())
     held = {
         fam: FusionConfig.from_dict(entry["config"])
@@ -36,12 +42,18 @@ def config_picker(tuning_path):
     global_cfg = FusionConfig.from_dict(tune["global"]["config"])
 
     def pick(corruption):
+        """FusionConfig for `corruption` (held-out family config, else global)."""
         fam = CORRUPTION_FAMILY.get(corruption)
         return held.get(fam, global_cfg)
     return pick
 
 
 def _load_condition(cache_dir, model, corruption, sev):
+    """Load one cached (corruption, severity) condition from `cache_dir`.
+
+    Returns:
+        The cache dict (paths, probs, labels, ...), or None if not cached.
+    """
     cache.CACHE_ROOT = Path(cache_dir)
     if not cache.has_condition(model, corruption, sev):
         return None
@@ -49,6 +61,11 @@ def _load_condition(cache_dir, model, corruption, sev):
 
 
 def _masked_record(d, frac_tune, split_seed):
+    """Restrict a loaded condition to its held-out (test) images.
+
+    Returns:
+        (paths, probs, labels) for the test split only.
+    """
     _, mask = tune_test_masks(d["paths"], frac_tune, split_seed)
     return (
         np.asarray(d["paths"])[mask],
@@ -58,6 +75,12 @@ def _masked_record(d, frac_tune, split_seed):
 
 
 def _simple_correct(mode, probs, labels):
+    """Per-image correctness of a non-fused predictor: "original" (view 0) or
+    "spatial" (mean over views).
+
+    Returns:
+        Bool array, True where the prediction matches the label.
+    """
     if mode == "original":
         pred = probs[:, 0].astype(np.float32).argmax(-1)
     elif mode == "spatial":
@@ -68,7 +91,14 @@ def _simple_correct(mode, probs, labels):
 
 
 def _same_cache_pair(args, corruption, sev, pick_a, pick_b, device):
-    d = _load_condition(args.a_cache, args.model, corruption, sev)
+    """Correctness of A and B on one condition when both read the same cache;
+    the condition is loaded once and fused signals are computed once for both.
+
+    Returns:
+        (paths, correct_a, correct_b) on the test split, or None if the
+        condition isn't cached.
+    """
+    d =_load_condition(args.a_cache, args.model, corruption, sev)
     if d is None:
         return None
     paths, probs, labels = _masked_record(d, args.frac_tune, args.split_seed)
@@ -103,7 +133,12 @@ def _same_cache_pair(args, corruption, sev, pick_a, pick_b, device):
 
 
 def _one_side(mode, cache_dir, tuning_picker, ladder_len, args, corruption, sev, device):
-    d = _load_condition(cache_dir, args.model, corruption, sev)
+    """Correctness of a single predictor (fused/original/spatial) on one condition.
+
+    Returns:
+        (paths, correct) on the test split, or None if the condition isn't cached.
+    """
+    d =_load_condition(cache_dir, args.model, corruption, sev)
     if d is None:
         return None
     paths, probs, labels = _masked_record(d, args.frac_tune, args.split_seed)
@@ -123,6 +158,13 @@ def _one_side(mode, cache_dir, tuning_picker, ladder_len, args, corruption, sev,
 
 
 def paired_conditions(args, device):
+    """Per-image A/B correctness for every (corruption, severity) available to
+    both sides, aligned by image path when the caches differ.
+
+    Returns:
+        List of dicts with corruption, severity, keys (image ids), a, b
+        (bool correctness arrays) and n.
+    """
     pick_a = config_picker(args.a_tuning) if args.a_mode == "fused" else None
     pick_b = config_picker(args.b_tuning) if args.b_mode == "fused" else None
     out = []
@@ -185,7 +227,8 @@ def bootstrap(conditions, n_boot, seed):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    """Bootstrap the A - B accuracy delta, print it and optionally save a json report."""
+    ap =argparse.ArgumentParser()
     ap.add_argument("--model", required=True, choices=["resnet18", "deit", "convnext"])
     for side in ("a", "b"):
         ap.add_argument(f"--{side}-mode", choices=["fused", "original", "spatial"], required=True)

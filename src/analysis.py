@@ -148,6 +148,7 @@ def zscore(x, axis=-1, eps=1e-8):
 
 
 def _default_device():
+    """'cuda' if available, else 'cpu'."""
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 

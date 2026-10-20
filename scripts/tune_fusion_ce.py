@@ -82,6 +82,7 @@ def signal_label(signals, agreement_modes):
 
 
 def latest_grid_tuning(model_name, tag, results_dir):
+    """Newest grid tuning json for (model, tag) in `results_dir`, or None."""
     patterns = [
         Path(results_dir) / f"tuning_grid_{model_name}_{tag}_*.json",
         Path(results_dir) / f"tuning_{model_name}_{tag}_*.json",
@@ -93,6 +94,11 @@ def latest_grid_tuning(model_name, tag, results_dir):
 
 
 def load_grid_record(spec, model_name, tag, results_dir):
+    """Load the grid tuning used as a warm start (`spec` = path, 'auto' or empty).
+
+    Returns:
+        (record, path), or (None, None) if there is none.
+    """
     if not spec:
         return None, None
     path = latest_grid_tuning(model_name, tag, results_dir) if spec == "auto" else spec
@@ -118,6 +124,7 @@ def grid_effective_start(grid_record, held_family=None):
 
 
 def _condition_keys(corruptions, severities, by_key, key):
+    """Conditions among corruptions x severities that have signals for `key`. Returns a list of (corruption, severity)."""
     return [
         (c, s)
         for c in corruptions
@@ -137,6 +144,11 @@ def concatenate_conditions(by_key, conditions, corruptions, severities, key):
 
 
 def baseline_means(base_meta, corruptions, severities):
+    """Mean (orig, equal-average) accuracy over the given conditions.
+
+    Returns:
+        (orig, equal), NaN if no condition matches.
+    """
     recs = [
         base_meta[(c, s)]
         for c in corruptions
@@ -258,6 +270,7 @@ def precompute_all_conditions(
 
 
 def _condition_to_device(cond, device):
+    """Move a condition's probs and labels to `device`. Returns (probs_t, labels_t)."""
     if torch.is_tensor(cond["probs"]):
         probs_t = cond["probs"].to(device=device, dtype=torch.float32)
     else:
@@ -382,6 +395,7 @@ def tune_output_temperature(
 
 
 def _variant_list(args):
+    """Variants to fit, from --variants or the single-variant shorthand flags. Returns a list of names."""
     if args.variants:
         # Preserve user order while removing duplicates.
         return list(dict.fromkeys(args.variants))
@@ -407,6 +421,11 @@ def _fit_one_key(
     device,
     free_signals=None,
 ):
+    """Fit CE signal coefficients (and optional view bias) with the torch or numpy optimizer.
+
+    Returns:
+        The fit backend's (theta, bias, objective, result).
+    """
     backend = args.optimizer_backend
     if backend == "auto":
         backend = "torch" if device.type == "cuda" else "numpy"
@@ -436,6 +455,9 @@ def _fit_one_key(
 
 
 def main():
+    """Fit CE fusion weights per model and variant on the tune half (per LOFO
+    fold and globally), tune scale and output temperature, save the tuning jsons.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"], choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--cache-dir", default="cache_fixed")
@@ -568,6 +590,13 @@ def main():
             }
 
             def tune_on(name, tune_corr, held_family=None):
+                """Fit the CE weights on `tune_corr`, keep the best (m, agreement) key, then
+                tune selection scale and output temperature.
+
+                Returns:
+                    Dict with the config, fit details and tune-half metrics, or None if
+                    no data.
+                """
                 t0 = time.time()
                 grid_start = grid_effective_start(grid_record, held_family)
                 best = None

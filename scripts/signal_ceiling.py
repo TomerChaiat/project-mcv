@@ -79,6 +79,11 @@ def precompute_conditions(
 
 
 def stack_train(pre, corruptions, severities):
+    """Stack tune-half features and labels over the given conditions.
+
+    Returns:
+        (X, y), or (None, None) if no condition is available.
+    """
     xs, ys = [], []
     for c in corruptions:
         for sev in severities:
@@ -92,6 +97,11 @@ def stack_train(pre, corruptions, severities):
 
 
 def fused_acc_from_scores(pre, corruptions, severities, score_fn):
+    """Test-half fused accuracy when per-view scores come from `score_fn`.
+
+    Returns:
+        Mean accuracy over the available conditions (NaN if none).
+    """
     accs = []
     for c in corruptions:
         for sev in severities:
@@ -107,6 +117,9 @@ def fused_acc_from_scores(pre, corruptions, severities, score_fn):
 
 
 def main():
+    """Fit logistic (and optionally GBM) per-view scorers per LOFO fold,
+    report held-out fused accuracy and save a json.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=["resnet18", "deit"], choices=["resnet18", "deit", "convnext"])
     ap.add_argument("--cache-dir", default="cache_fixed")

@@ -89,10 +89,14 @@ def main():
 
 
 def _mean(rows, key):
+    """Mean of `key` over `rows`, or NaN if `rows` is empty."""
     return float(np.mean([r[key] for r in rows])) if rows else float("nan")
 
 
 def _report(model_name, rows, clean_row, out_dir, stamp):
+    """Write the per-condition csv and summary json for one model and print
+    the per-corruption orig/TTA table. Returns nothing.
+    """
     name = f"tta_{model_name}_{stamp}"
     csv_path = out_dir / f"{name}.csv"
     with open(csv_path, "w", newline="") as f:

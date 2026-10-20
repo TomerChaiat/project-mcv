@@ -25,6 +25,11 @@ MODELS = ["resnet18", "deit", "convnext"]
 
 
 def drift_and_conf(probs):
+    """Mean JSD of each view to the original and mean max-probability per view.
+
+    Returns:
+        (jsd, conf), each of shape (n_views,).
+    """
     p = probs.astype(np.float32)
     jsd = analysis.jensen_shannon(p, p[:, :1]).mean(0)          # (K+1,), view 0 -> 0
     conf = p.max(-1).mean(0)
@@ -32,6 +37,9 @@ def drift_and_conf(probs):
 
 
 def main():
+    """Per model and family, average the drift/confidence profile over the test
+    half; print it and save a json.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache-dir", default="cache_fixed")
     ap.add_argument("--out", default="results/profile_shape.json")

@@ -107,6 +107,9 @@ class ConditionAUROC:
     """
 
     def __init__(self, score, label, cond, img, n_cond, device):
+        """Sort by (condition, score) once and precompute tie groups so AUROC can be
+        recomputed for many bootstrap weightings on `device`.
+        """
         order = np.lexsort((score, cond))
         s, c = score[order], cond[order]
         new = np.r_[True, (s[1:] != s[:-1]) | (c[1:] != c[:-1])]
@@ -150,6 +153,12 @@ def group_means(auc, cond_family):
 
 
 def part_a(model, data, args, device):
+    """Part A: per-signal AUROC for predicting view correctness (and beating
+    the original), by family, with image-cluster bootstrap CIs.
+
+    Returns:
+        Dict with n_images, n_conditions, views and per-target signal AUROCs.
+    """
     conds = list(data)
     cond_family = [CORRUPTION_FAMILY[c] for c, _ in conds]
     keys = sorted({str(k) for d in data.values() for k in d["keys"]})
@@ -161,6 +170,7 @@ def part_a(model, data, args, device):
     views = list(range(1, n_views))
 
     def cat(fn):
+        """Concatenate `fn(d)` over all conditions in `data`. Returns one array."""
         return np.concatenate([fn(d) for d in data.values()])
 
     calcs, base_rate = {}, {}
@@ -230,6 +240,7 @@ def part_a(model, data, args, device):
 # Part B: test-half evaluation of the subset fits
 # --------------------------------------------------------------------------- #
 def latest_fit(fits, method, model, tag):
+    """Newest tuning json for (method, model, tag) under `fits`, or None."""
     rx = re.compile(rf"tuning_{re.escape(method)}_{re.escape(model)}_{re.escape(tag)}_\d{{8}}_\d{{6}}\.json$")
     files = [f for f in glob.glob(str(Path(fits) / f"tuning_{method}_{model}_{tag}_*.json"))
              if rx.search(f)]
@@ -237,6 +248,12 @@ def latest_fit(fits, method, model, tag):
 
 
 def part_b(model, data, args, device):
+    """Part B: test-half accuracy of CE + bias fits on each signal subset,
+    checked against the pipeline's own fits, with bootstrapped comparisons.
+
+    Returns:
+        Dict with orig_mCA, reproduction checks and per-subset results.
+    """
     recs = {}
     for sub in SUBSETS:
         path = latest_fit(args.fits, f"ce_bias_sig{sub}", model, args.tag)
@@ -267,9 +284,15 @@ def part_b(model, data, args, device):
         orig[cs] = o
 
     def mca(c):
+        """Mean accuracy over conditions of a {condition: correctness} dict."""
         return float(np.mean([v.mean() for v in c.values()]))
 
     def boot(a, b):
+        """Paired cluster bootstrap of a - b over the test images.
+
+        Returns:
+            {"point", "ci95", "p_le_zero"} with point/CI in percentage points.
+        """
         r = cluster_bootstrap([{"keys": data[cs]["keys"], "a": a[cs], "b": b[cs]} for cs in data],
                               n_boot=args.n_boot, seed=args.seed)
         return {"point": 100 * r["point"], "ci95": [100 * x for x in r["ci95"]],
@@ -312,12 +335,14 @@ def part_b(model, data, args, device):
 # tables and figure
 # --------------------------------------------------------------------------- #
 def _ci(x, scale=1.0, sign=False):
+    """Format a point estimate with its 95% CI as 'p [lo, hi]'. Returns a string."""
     f = "{:+.2f}" if sign else "{:.2f}"
     p, (lo, hi) = x["point"] if "point" in x else x["auroc"], x["ci95"]
     return f"{f.format(scale * p)} [{f.format(scale * lo)}, {f.format(scale * hi)}]"
 
 
 def table_auroc(res, path):
+    """Write the LaTeX AUROC table (per model x signal, by family). Returns nothing."""
     fam = list(FAMILIES)
     lines = [r"\begin{tabular}{ll" + "r" * 10 + "}", r"\toprule",
              r" & & \multicolumn{5}{c}{view $k$ correct} & \multicolumn{5}{c}{view $k$ correct, original wrong ($s_k - s_0$)} \\",
@@ -344,6 +369,7 @@ def table_auroc(res, path):
 
 
 def table_subsets(res, path):
+    """Write the LaTeX signal-subset accuracy table. Returns nothing."""
     lines = [r"\begin{tabular}{llrrrr}", r"\toprule",
              r"Model & Signals fitted & Accuracy & $-$ \{C, A, S\} & $-$ bias only & $-$ original \\",
              r"\midrule"]
@@ -367,6 +393,7 @@ def table_subsets(res, path):
 
 
 def plot_auroc(res, stem):
+    """Plot per-signal AUROC by family for every model; saves <stem>.pdf/.png."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -425,6 +452,7 @@ def plot_auroc(res, stem):
 
 
 def write_outputs(out, figures, parts):
+    """Write the tables/figures for the requested parts from the saved jsons."""
     if "A" in parts and (out / "signal_auroc.json").exists():
         a = json.loads((out / "signal_auroc.json").read_text())
         table_auroc(a, Path(figures) / "table_signal_auroc.tex")
@@ -435,6 +463,7 @@ def write_outputs(out, figures, parts):
 
 
 def main():
+    """Run parts A and/or B for every model, save the jsons and write the outputs."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=MODELS, choices=MODELS)
     ap.add_argument("--parts", nargs="+", default=["A", "B"], choices=["A", "B"])

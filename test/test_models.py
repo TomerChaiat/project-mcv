@@ -13,6 +13,7 @@ from src.models import load_convnext_tiny, load_deit_tiny, load_resnet18
 
 
 def main():
+    """Smoke test: load ResNet-18, DeiT-Tiny and ConvNeXt-Tiny on the best available device."""
     device = torch.device(
         "cuda" if torch.cuda.is_available()
         else "mps" if torch.backends.mps.is_available()

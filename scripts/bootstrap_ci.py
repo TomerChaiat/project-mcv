@@ -57,6 +57,8 @@ def config_picker(model_name, tag, results_dir="results"):
     glob_cfg = FusionConfig.from_dict(tune["global"]["config"])
 
     def pick(corruption):
+        """FusionConfig for `corruption`: its family's held-out config, or the
+        global config if the family wasn't held out."""
         fam = CORRUPTION_FAMILY.get(corruption)
         return held.get(fam, glob_cfg)
 
@@ -83,6 +85,12 @@ def per_image_correctness(model_name, cache_dir, tag, ladder_len, severities,
     """Fast orig/fused/(optional spatial) per-image correctness.
 
     Fusion signals run on torch/CUDA.
+
+    Returns:
+        (conditions, tuning_path) where `conditions` is a list with one dict
+        per cached (corruption, severity) on the held-out split - image keys,
+        per-image bool correctness for orig/fused/view1/baselines, tta (None
+        if no spatial cache) and n - and `tuning_path` is the tuning json used.
     """
     cache.CACHE_ROOT = Path(cache_dir)
     pick, tuning_path = config_picker(model_name, tag, results_dir)

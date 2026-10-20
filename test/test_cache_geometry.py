@@ -9,6 +9,11 @@ from src import cache
 
 
 def _save(tmp_path, name, w, h, seed=0):
+    """Save a random RGB PNG of size w x h.
+
+    Returns:
+        (path, pixel array).
+    """
     rng = np.random.default_rng(seed)
     arr = rng.integers(0, 256, size=(h, w, 3), dtype=np.uint8)
     p = tmp_path / name
@@ -25,6 +30,7 @@ def test_224_image_is_used_as_is(tmp_path):
 
 
 def test_full_size_image_gets_resize_and_center_crop(tmp_path):
+    """A full-size image is resized to 256 and center-cropped to 224, like torchvision."""
     p, _ = _save(tmp_path, "v.png", 341, 256)
     x = cache.load_image(p)
     ref = TF.to_tensor(TF.center_crop(TF.resize(Image.open(p).convert("RGB"), 256), [224, 224]))
@@ -32,6 +38,7 @@ def test_full_size_image_gets_resize_and_center_crop(tmp_path):
 
 
 def test_spatial_view0_is_input_and_shapes():
+    """spatial_views keeps the input as view 0, view 1 is the hflip, and shapes/ranges are right."""
     imgs = torch.rand(2, 3, 224, 224)
     v = cache.spatial_views(imgs)
     assert v.shape == (2, 8, 3, 224, 224)
@@ -66,6 +73,7 @@ def test_pad_corner_views_are_unresampled_shifts():
 
 
 def test_virtual_combined_cache_matches_merge(tmp_path, monkeypatch):
+    """A virtual combined cache loads the same 15-view record as merging the two caches, aligned by path."""
     rng = np.random.default_rng(0)
     paths = np.asarray([f"x/ILSVRC_{i}.JPEG" for i in range(5)])
     labels = np.arange(5, dtype=np.int32)

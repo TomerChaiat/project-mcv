@@ -221,9 +221,11 @@ def spectral_views(images, energies, bisect_iters=18):
     r2 = xx ** 2 + yy ** 2                                    # (H,W)
 
     def mask(cutoff):                                         # cutoff (B,)
+        """Gaussian low-pass mask per cutoff. Returns a (B, H, W) tensor."""
         return torch.exp(-r2[None] / (2.0 * cutoff[:, None, None] ** 2))
 
     def kept_fraction(cutoff):
+        """Fraction of the image's spectral energy kept by each cutoff's mask. Returns a (B,) tensor."""
         m = mask(cutoff)[:, None]                             # (B,1,H,W)
         # m multiplies the Fourier amplitude, so retained *energy* scales
         # with m**2.  Using power*m would overestimate retained energy.
@@ -321,6 +323,7 @@ def _prefetched_image_batches(image_paths, loader, batch_size, workers=8, prefet
         next_i = 0
 
         def submit_one(i):
+            """Queue background loads for the batch starting at image `i`."""
             chunk = image_paths[i:i + batch_size]
             futures = [pool.submit(loader, p) for p in chunk]
             pending.append((i, len(chunk), futures))
@@ -478,16 +481,19 @@ SPATIAL_VIEW_NAMES = (
 
 
 def _virtual_spec():
+    """The virtual combined-cache spec in CACHE_ROOT, as a dict, or None if CACHE_ROOT is a real cache."""
     p = Path(CACHE_ROOT) / VIRTUAL_SPEC
     return json.loads(p.read_text()) if p.exists() else None
 
 
 def _npz_path(root, model_name, corruption, severity):
+    """Path of the npz file for (model, corruption, severity) under `root`."""
     sev = "0" if corruption == "clean" else str(severity)
     return Path(root) / model_name / corruption / f"{sev}.npz"
 
 
 def _read_npz(path):
+    """Load a cache npz into a dict (probs, labels, paths, ...); missing optional fields are None."""
     d = np.load(path, allow_pickle=False)
     return {
         "probs": d["probs"],
@@ -546,6 +552,11 @@ def merge_profiles(spec, spat, spatial_views=range(1, 8), ladder_len=COMBINED_LA
 
 
 def _load_virtual(spec_cfg, model_name, corruption, severity):
+    """Load and merge the spectral and spatial records of a virtual combined cache.
+
+    Returns:
+        The merged record, as from merge_profiles.
+    """
     spec = _read_npz(_npz_path(spec_cfg["spectral"], model_name, corruption, severity))
     spat = _read_npz(_npz_path(spec_cfg["spatial"], model_name, corruption, severity))
     return merge_profiles(
